@@ -1,0 +1,13 @@
+.venv/
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+dataset/drives/
+dataset/images/
+event_logger/evidence/
+accident_reports/packages/
+models/**/*.joblib
+models/metrics.json
+models/validation/

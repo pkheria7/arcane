@@ -1,0 +1,14 @@
+[Unit]
+Description=ARCANE Explainable Autonomous Vehicle
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/Users/pkheria7/Documents/ARCANE
+Environment=ARCANE_HOST_URL=http://YOUR_MAC_IP:8765
+ExecStart=/Users/pkheria7/Documents/ARCANE/.venv/bin/python -m rpi_edge.client --host-url ${ARCANE_HOST_URL} --vehicle-id rpi-car-01
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

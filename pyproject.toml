@@ -1,0 +1,34 @@
+[project]
+name = "arcane-xav"
+version = "0.1.0"
+description = "Explainable autonomous vehicle stack for Raspberry Pi cars."
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scikit-learn>=1.3",
+  "joblib>=1.3",
+  "opencv-python>=4.8",
+  "matplotlib>=3.7",
+  "pytest>=7.4",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+pi = [
+  "gpiozero>=2.0",
+  "smbus2>=0.4",
+  "pyserial>=3.5",
+  "picamera2>=0.3",
+]
+train = [
+  "lightgbm>=4.0",
+  "torch>=2.0",
+]
+dev = [
+  "pytest>=7.4",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

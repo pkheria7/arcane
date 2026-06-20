@@ -1,0 +1,39 @@
+gpio:
+  motor:
+    ena_pwm: 18
+    in1: 17
+    in2: 27
+    enb_pwm: 19
+    in3: 22
+    in4: 23
+  front_motor:
+    ena_pwm: 11
+    in1: 7
+    in2: 8
+    enb_pwm: 12
+    in3: 9
+    in4: 10
+  servo: 20
+  ir:
+    # Physical left/right IR sensors are swapped relative to the layout image.
+    left: 16
+    center: 6
+    right: 5
+  ultrasonic:
+    trig: 4
+    echo: 21
+  i2c:
+    sda: 2
+    scl: 3
+  gps_uart:
+    tx: 14
+    rx: 15
+
+navigation:
+  constant_speed: 0.42
+  turn_speed: 0.36
+  emergency_distance_cm: 18.0
+  safe_gap_threshold: 0.35
+  center_scan_angles: [-60, -30, 0, 30, 60]
+  evidence_pre_seconds: 6
+  evidence_post_seconds: 4
