@@ -92,6 +92,6 @@ Environment=ARCANE_HOST_URL=http://YOUR_MAC_IP:8765
 - Confirm motor directions by running a short simulated actuation test with wheels lifted.
 - Test forward and reverse from the dashboard while wheels are lifted.
 - Test steering on blocks before placing the car on the floor.
-- Confirm servo angle `0` points front, `90` points left side, and `180` points right side.
+- Confirm servo angle `90` points front, `180` points left side, and `0` points right side.
 - Place a known obstacle at 20 cm and tune `emergency_distance_cm`.
 - Collect manual dashboard driving data in `dataset/drives/manual_drive_log.csv` before training behavior-cloning models.

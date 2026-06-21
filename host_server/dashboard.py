@@ -29,7 +29,7 @@ DASHBOARD_HTML = """<!doctype html>
   <main>
     <section class="video"><img id="preview" alt="Live vehicle camera"></section>
     <section class="panel">
-      <div class="status">Camera servo: sensor controlled. Left/right IR points the camera to that side; ultrasonic below 50 cm triggers a gap scan.</div>
+      <div class="status">Camera servo: sensor controlled. Left/right IR points the camera to that side; ultrasonic below 200 cm triggers a gap scan.</div>
 
       <label>Steering <span id="steeringValue">straight</span></label>
       <div class="steering-grid" id="steeringButtons">
@@ -59,7 +59,7 @@ DASHBOARD_HTML = """<!doctype html>
     </section>
   </main>
   <script>
-    const speeds = [2, 3, 4, 5];
+    const speeds = [4, 5];
     let state = { speed_cm_s: 5, steering: 0, direction: 'forward', servo_angle: 0, stop: true, sweep_requested: false };
     let latestImageAt = 0;
     const steeringLabels = new Map([

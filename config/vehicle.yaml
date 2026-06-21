@@ -34,6 +34,7 @@ navigation:
   turn_speed: 0.36
   emergency_distance_cm: 18.0
   safe_gap_threshold: 0.35
-  center_scan_angles: [-60, -30, 0, 30, 60]
+  # Absolute servo angles: 0=right, 90=front, 180=left
+  center_scan_angles: [45, 90, 135]
   evidence_pre_seconds: 6
   evidence_post_seconds: 4

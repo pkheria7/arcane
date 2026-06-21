@@ -125,7 +125,7 @@ The Pi sends IR, ultrasonic, GPS, MPU6050, and camera frames to the Mac. It rece
 
 Use the Mac dashboard as the remote control:
 
-- camera servo physical calibration: `0` front, `90` left side, `180` right side
+- camera servo physical calibration: `90` front, `180` left side, `0` right side
 - sweep button: captures all scan angles
 - speed modes: `2`, `3`, `4`, `5 cm/s`
 - forward/reverse direction buttons

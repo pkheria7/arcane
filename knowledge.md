@@ -143,9 +143,9 @@ Environment=ARCANE_HOST_URL=http://YOUR_MAC_IP:8765
 
 The dashboard is the remote control:
 
-- **Camera servo calibration:** `0` front, `90` left side, `180` right side.
+- **Camera servo calibration:** `90` front, `180` left side, `0` right side.
 - **Sweep button:** captures all scan angles.
-- **Speed modes:** `2`, `3`, `4`, `5 cm/s`.
+- **Speed modes:** `4`, `5 cm/s`.
 - **Direction buttons:** forward / reverse.
 - **Steering slider:** `-1.0` full left to `+1.0` full right.
 - **Stop button:** immediate manual stop command.
@@ -163,7 +163,7 @@ Manual remote-control cycles are stored in `dataset/drives/manual_drive_log.csv`
 | `timestamp` | Unix timestamp in seconds |
 | `ir_left`, `ir_center`, `ir_right` | Normalized binary obstacle signals (`1` = obstacle, `0` = clear) |
 | `ultrasonic_distance` | Distance in centimeters |
-| `servo_angle` | Camera servo angle (`0` front, `90` left side, `180` right side) |
+| `servo_angle` | Camera servo angle (`90` front, `180` left side, `0` right side) |
 | `gps_lat`, `gps_lon` | GPS coordinates when available |
 | `heading` | IMU-derived heading |
 | `acceleration`, `accel_x`, `accel_y`, `accel_z`, `gyro_z` | MPU6050 features |
@@ -368,7 +368,7 @@ torch>=2.0
 - Confirm motor directions with a short simulated actuation test (wheels lifted).
 - Test forward and reverse from the dashboard (wheels lifted).
 - Test steering on blocks before placing the car on the floor.
-- Confirm servo angle `0` points front, `90` points left side, and `180` points right side.
+- Confirm servo angle `90` points front, `180` points left side, and `0` points right side.
 - Place a known obstacle at 20 cm and tune `emergency_distance_cm`.
 - Collect manual dashboard driving data in `dataset/drives/manual_drive_log.csv` before training behavior-cloning models.
 

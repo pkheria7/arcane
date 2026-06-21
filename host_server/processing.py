@@ -69,9 +69,9 @@ class HostProcessor:
 
         scan_scores, scan_metrics = self._scan_scores(packet.get("scan_images") or [], upload_dir)
         if scan_scores:
-            frame_data["left_gap_score"] = max(scan_scores.get(90, (0.0, 0.0, 0.0))[0], scan_scores.get(45, (0.0, 0.0, 0.0))[0])
-            frame_data["center_gap_score"] = scan_scores.get(0, (0.0, 0.5, 0.0))[1]
-            frame_data["right_gap_score"] = max(scan_scores.get(135, (0.0, 0.0, 0.0))[2], scan_scores.get(180, (0.0, 0.0, 0.0))[2])
+            frame_data["left_gap_score"] = scan_scores.get(135, (0.0, 0.0, 0.0))[0]
+            frame_data["center_gap_score"] = scan_scores.get(90, (0.0, 0.5, 0.0))[1]
+            frame_data["right_gap_score"] = scan_scores.get(45, (0.0, 0.0, 0.0))[2]
         else:
             frame_data["left_gap_score"] = 0.5
             frame_data["center_gap_score"] = 0.5

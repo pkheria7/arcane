@@ -7,7 +7,7 @@ Manual remote-control cycles are appended to `dataset/drives/manual_drive_log.cs
 | `timestamp` | Unix timestamp in seconds |
 | `ir_left`, `ir_center`, `ir_right` | Normalized binary obstacle signals where `1` means obstacle and `0` means clear |
 | `ultrasonic_distance` | Distance in centimeters |
-| `servo_angle` | Camera servo angle using physical calibration: `0` front, `90` left side, `180` right side |
+| `servo_angle` | Camera servo angle using physical calibration: `90` front, `180` left side, `0` right side |
 | `gps_lat`, `gps_lon` | GPS coordinates when available |
 | `heading` | IMU-derived heading |
 | `acceleration`, `accel_x`, `accel_y`, `accel_z`, `gyro_z` | MPU6050 features |

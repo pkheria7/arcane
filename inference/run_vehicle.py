@@ -37,6 +37,8 @@ def run(simulate: bool, model_path: str | None, dataset_path: str, cycle_delay: 
     else:
         cfg = load_vehicle_config()
         gpio = cfg["gpio"]
+        nav_cfg = cfg["navigation"]
+        scan_angles = nav_cfg["center_scan_angles"]
         sensors = PiSensorSuite(
             ir_left=gpio["ir"]["left"],
             ir_center=gpio["ir"]["center"],
@@ -76,24 +78,24 @@ def run(simulate: bool, model_path: str | None, dataset_path: str, cycle_delay: 
             frame = sensors.read_frame(servo_angle=getattr(servo, "angle", 0), image_path=image_path)
             if frame.ir_center:
                 scan_scores = {}
-                for angle in (-60, -30, 0, 30, 60):
+                for angle in scan_angles:
                     servo.set_angle(angle)
                     scan_image = sensors.capture_image(image_dir, f"scan_{angle}")
                     scan_scores[angle] = image_gap_scores(scan_image)
-                left_gap = max(scan_scores[-60][0], scan_scores[-30][0])
-                center_gap = scan_scores[0][1]
-                right_gap = max(scan_scores[30][2], scan_scores[60][2])
+                left_gap = max(scan_scores[scan_angles[0]][0], scan_scores[scan_angles[1]][0])
+                center_gap = scan_scores[scan_angles[2]][1]
+                right_gap = max(scan_scores[scan_angles[3]][2], scan_scores[scan_angles[4]][2])
                 frame = frame.__class__(**{**frame.__dict__, "left_gap_score": left_gap, "center_gap_score": center_gap, "right_gap_score": right_gap})
             else:
                 left_gap, center_gap, right_gap = image_gap_scores(image_path)
                 frame = frame.__class__(**{**frame.__dict__, "left_gap_score": left_gap, "center_gap_score": center_gap, "right_gap_score": right_gap})
 
             if frame.ir_left:
-                servo.set_angle(-60)
+                servo.set_angle(180)
             elif frame.ir_right:
-                servo.set_angle(60)
-            else:
                 servo.set_angle(0)
+            else:
+                servo.set_angle(90)
 
             decision = runtime.decide(frame)
             apply_action(motor, decision)
