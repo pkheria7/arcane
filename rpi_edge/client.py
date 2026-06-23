@@ -91,8 +91,6 @@ def capture_payload(sensors, servo, image_dir: Path, prefix: str, quality: int) 
 
 
 def set_servo_for_obstacles(servo, frame) -> None:
-    if frame.ultrasonic_distance < GAP_SCAN_DISTANCE_CM:
-        return
     if frame.ir_left:
         servo.set_angle(SERVO_LEFT)
     elif frame.ir_right:
