@@ -154,7 +154,7 @@ class PiServo(Servo):
         self.servo = AngularServo(pin, min_angle=0, max_angle=180, min_pulse_width=min_pulse_width, max_pulse_width=max_pulse_width)
         self.angle = 0
         self.servo.angle = 0
-        sleep(0.5)
+        sleep(0.05)
         print("[edge] servo -> 0 front", flush=True)
 
     def set_angle(self, angle: int) -> None:
@@ -165,4 +165,4 @@ class PiServo(Servo):
         self.servo.angle = next_angle
         label = "front" if next_angle == 0 else "left" if next_angle == 90 else "right" if next_angle == 180 else "scan"
         print(f"[edge] servo -> {next_angle} {label}", flush=True)
-        sleep(0.5)
+        sleep(0.05)
