@@ -117,7 +117,7 @@ def build_packet(vehicle_id: str, sensors, servo, image_dir: Path, send_camera: 
     image = capture_payload(sensors, servo, image_dir, "edge_cycle", jpeg_quality) if send_camera else None
     frame = frame.__class__(**{**frame.__dict__, "servo_angle": getattr(servo, "angle", 0)})
     scan_images = []
-    if send_camera and frame.ir_center:
+    if send_camera and frame.ultrasonic_distance < GAP_SCAN_DISTANCE_CM:
         scan_images = capture_gap_scan(sensors, servo, image_dir, jpeg_quality, "edge_gap_scan")
         servo.set_angle(SERVO_FRONT)
     return EdgePacket.from_frame(vehicle_id=vehicle_id, frame=frame, image=image, scan_images=scan_images)
