@@ -101,8 +101,8 @@ class PiMotorDriver(MotorDriver):
         self.ena.value = value
         self.enb.value = value
         if self._has_front:
-            self.front_in1.value = left_forward
-            self.front_in2.value = not left_forward
+            self.front_in1.value = not left_forward
+            self.front_in2.value = left_forward
             self.front_in3.value = right_forward
             self.front_in4.value = not right_forward
             self.front_ena.value = value
@@ -127,7 +127,7 @@ class PiMotorDriver(MotorDriver):
         self._set_side(self.in1, self.in2, self.ena, left_speed)
         self._set_side(self.in3, self.in4, self.enb, right_speed)
         if self._has_front:
-            self._set_side(self.front_in1, self.front_in2, self.front_ena, left_speed)
+            self._set_side(self.front_in2, self.front_in1, self.front_ena, left_speed)
             self._set_side(self.front_in3, self.front_in4, self.front_enb, right_speed)
 
     def stop(self) -> None:
@@ -152,10 +152,10 @@ class PiServo(Servo):
         from gpiozero import AngularServo
 
         self.servo = AngularServo(pin, min_angle=0, max_angle=180, min_pulse_width=min_pulse_width, max_pulse_width=max_pulse_width)
-        self.angle = 90
-        self.servo.angle = 90
+        self.angle = 0
+        self.servo.angle = 0
         sleep(0.5)
-        print("[edge] servo -> 90 front", flush=True)
+        print("[edge] servo -> 0 front", flush=True)
 
     def set_angle(self, angle: int) -> None:
         next_angle = max(0, min(180, int(angle)))
@@ -163,6 +163,6 @@ class PiServo(Servo):
             return
         self.angle = next_angle
         self.servo.angle = next_angle
-        label = "front" if next_angle == 90 else "left" if next_angle == 180 else "right" if next_angle == 0 else "scan"
+        label = "front" if next_angle == 0 else "left" if next_angle == 90 else "right" if next_angle == 180 else "scan"
         print(f"[edge] servo -> {next_angle} {label}", flush=True)
         sleep(0.5)
