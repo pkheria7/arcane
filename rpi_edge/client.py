@@ -18,7 +18,7 @@ from sensor_layer.sensors import PiSensorSuite, SimulatedSensorSuite
 SERVO_FRONT = 90
 SERVO_LEFT = 180
 SERVO_RIGHT = 0
-SCAN_ANGLES = (45, 90, 135)
+SCAN_ANGLES = (30, 90, 150)
 MAX_SPEED_CM_S = 5.0
 GAP_SCAN_DISTANCE_CM = 100.0
 STEERING_DEADZONE = 0.08
