@@ -23,11 +23,12 @@ class EvidenceLogger:
     def event_needed(self, frame: SensorFrame, decision: Decision) -> bool:
         return bool(frame.ir_left or frame.ir_center or frame.ir_right or decision.action.value == "stop" or abs(frame.gyro_z) > 45)
 
-    def write_event(self, event_type: str, frame: SensorFrame, decision: Decision) -> Path:
+    def write_event(self, event_type: str, frame: SensorFrame, decision: Decision, mode: str = "manual") -> Path:
         event_dir = self.root / f"{int(time() * 1000)}_{event_type}"
         event_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "event_type": event_type,
+            "mode": mode,
             "current_frame": asdict(frame),
             "decision": self._decision_dict(decision),
             "sensor_history": list(self.history),

@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
+from .autonomous_dashboard import AUTONOMOUS_DASHBOARD_HTML
 from .dashboard import DASHBOARD_HTML
 from .processing import HostProcessor
 
@@ -16,6 +18,9 @@ class VehicleRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self._write_html(DASHBOARD_HTML)
+            return
+        if parsed.path == "/auto":
+            self._write_html(AUTONOMOUS_DASHBOARD_HTML)
             return
         if parsed.path == "/health":
             self._write_json({"status": "ok"})
@@ -36,6 +41,21 @@ class VehicleRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if parsed.path == "/api/v1/accident-report":
+            from urllib.parse import parse_qs
+
+            query = parse_qs(parsed.query)
+            report_path = query.get("path", [None])[0]
+            if report_path and Path(report_path).exists():
+                body = Path(report_path).read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_error(404)
+            return
         self.send_error(404)
 
     def do_POST(self) -> None:
@@ -46,6 +66,15 @@ class VehicleRequestHandler(BaseHTTPRequestHandler):
                 payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
                 command = self.processor.update_command(payload)
                 self._write_json({"command": command.__dict__})
+            except Exception as exc:
+                self._write_error(exc)
+            return
+        if parsed.path == "/api/v1/mode":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+                mode = self.processor.update_mode(payload)
+                self._write_json({"mode": mode})
             except Exception as exc:
                 self._write_error(exc)
             return

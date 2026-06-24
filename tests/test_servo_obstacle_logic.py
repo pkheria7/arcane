@@ -29,7 +29,7 @@ def test_right_ir_moves_camera_right():
     assert servo.calls == [SERVO_RIGHT]
 
 
-def test_ultrasonic_scan_distance_does_not_set_single_angle():
+def test_no_ir_obstacle_points_camera_front():
     servo = FakeServo()
     set_servo_for_obstacles(servo, frame(ultrasonic_distance=GAP_SCAN_DISTANCE_CM - 1))
-    assert servo.calls == []
+    assert servo.calls == [90]

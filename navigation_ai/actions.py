@@ -18,6 +18,7 @@ class ReasonCode(StrEnum):
     FRONT_OBSTACLE_RIGHT_GAP = "front_obstacle_right_gap"
     EMERGENCY_STOP = "emergency_stop"
     NO_SAFE_PATH = "no_safe_path"
+    MANUAL_CONTROL = "manual_control"
 
 
 ACTIONS = [Action.LEFT, Action.STRAIGHT, Action.RIGHT, Action.STOP]

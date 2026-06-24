@@ -77,6 +77,7 @@ class HostCommand:
     sweep_requested: bool = False
     event_recorded: bool = False
     accident_report_path: str | None = None
+    mode: str = "manual"
 
     def to_json_dict(self) -> dict[str, Any]:
         return asdict(self)

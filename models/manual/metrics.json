@@ -1,0 +1,13 @@
+{
+  "best_model": "random_forest_regressor",
+  "models": {
+    "random_forest_regressor": {
+      "mae": 0.11348931212565701,
+      "mse": 0.07905099612227497
+    },
+    "small_neural_network_regressor": {
+      "mae": 0.26654202537614746,
+      "mse": 0.1854241327247422
+    }
+  }
+}

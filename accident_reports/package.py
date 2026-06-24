@@ -14,10 +14,11 @@ class AccidentPackager:
         self.output_root = Path(output_root)
         self.output_root.mkdir(parents=True, exist_ok=True)
 
-    def create(self, frame: SensorFrame, decision: Decision, evidence: EvidenceLogger) -> Path:
+    def create(self, frame: SensorFrame, decision: Decision, evidence: EvidenceLogger, mode: str = "manual") -> Path:
         package_dir = self.output_root / f"accident_{int(time() * 1000)}"
         package_dir.mkdir(parents=True, exist_ok=True)
         payload = {
+            "mode": mode,
             "gps_location": {"lat": frame.gps_lat, "lon": frame.gps_lon},
             "selected_action": decision.action.value,
             "alternative_actions": sorted(decision.probabilities.items(), key=lambda item: item[1], reverse=True)[1:],

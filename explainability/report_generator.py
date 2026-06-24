@@ -19,9 +19,11 @@ def generate_report(package_path: str | Path, output_path: str | Path | None = N
         avoidable = "not enough evidence for a definitive avoidability finding"
 
     location = data.get("gps_location", {})
+    mode = data.get("mode", "manual")
     lines = [
         "# Explainable Accident Report",
         "",
+        f"- Mode at time of incident: **{mode.upper()}**",
         f"- GPS location: {location.get('lat')}, {location.get('lon')}",
         f"- Detected reason code: {data['reason_code']}",
         f"- Selected action: {selected}",
