@@ -8,6 +8,6 @@ dataset/drives/
 dataset/images/
 event_logger/evidence/
 accident_reports/packages/
-models/**/*.joblib
+# models/**/*.joblib
 models/metrics.json
 models/validation/
