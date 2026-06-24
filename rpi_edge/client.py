@@ -22,6 +22,7 @@ SCAN_ANGLES = (30, 90, 150)
 MAX_SPEED_CM_S = 5.0
 GAP_SCAN_DISTANCE_CM = 100.0
 EMERGENCY_SCAN_DISTANCE_CM = 40.0
+LOCAL_EMERGENCY_STOP_DISTANCE_CM = 15.0
 STEERING_DEADZONE = 0.08
 FULL_TURN_THRESHOLD = 0.72
 SLIGHT_TURN_MIN_INNER_RATIO = 0.22
@@ -205,8 +206,9 @@ def run(
             # Read sensors first so we can apply a local emergency reflex before
             # waiting for the host response.
             frame = sensors.read_frame(servo_angle=getattr(servo, "angle", 0), image_path=None)
-            local_emergency = bool(frame.ir_center) or frame.ultrasonic_distance < EMERGENCY_SCAN_DISTANCE_CM
+            local_emergency = bool(frame.ir_center) or frame.ultrasonic_distance < LOCAL_EMERGENCY_STOP_DISTANCE_CM
             if local_emergency:
+                # Hard reflex: stop motors immediately before waiting for host.
                 motor.stop()
                 print(
                     f"[edge] LOCAL EMERGENCY STOP ir_center={frame.ir_center} "
@@ -232,10 +234,6 @@ def run(
                 sleep(max(cycle_delay, 1.0))
                 command = {"stop": True, "action": "stop"}
                 continue
-            # If local emergency was active this cycle, force the next command to
-            # stop as well until the host explicitly tells us to move.
-            if local_emergency:
-                command = {**command, "stop": True}
             left_speed, right_speed = apply_command(motor, servo, command)
             print(
                 "[edge] command="
