@@ -50,7 +50,10 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
       <div>
         <h1>ARCANE Autonomous</h1>
         <span id="modeBadge" class="mode manual">Manual</span>
+        <span id="modelBadge" class="mode" style="margin-left: 8px; background: #444;">Model: checking...</span>
       </div>
+
+      <div id="errorBox" class="reason" style="color: #ff9999; display: none;"></div>
 
       <div class="decision">
         <div class="row"><span class="label">Action</span><span id="actionValue" class="value">-</span></div>
@@ -79,15 +82,23 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
   </main>
   <script>
     let mode = 'manual';
+    let modelLoaded = false;
     let latestImageAt = 0;
 
     async function postMode(nextMode) {
-      mode = nextMode;
-      await fetch('/api/v1/mode', {
+      const res = await fetch('/api/v1/mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode })
+        body: JSON.stringify({ mode: nextMode })
       });
+      const result = await res.json();
+      if (result.error) {
+        showError(result.error);
+        mode = 'manual';
+      } else {
+        mode = result.mode;
+        showError(null);
+      }
       renderMode();
     }
 
@@ -97,7 +108,31 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
       badge.className = 'mode ' + mode;
       badge.textContent = mode === 'auto' ? 'Autonomous' : 'Manual';
       btn.textContent = mode === 'auto' ? 'Stop Autonomous' : 'Start Autonomous';
-      btn.className = mode === 'auto' ? 'auto' : 'auto';
+      btn.disabled = !modelLoaded && mode !== 'auto';
+    }
+
+    function renderModelStatus(loaded, error) {
+      modelLoaded = loaded;
+      const badge = document.getElementById('modelBadge');
+      if (loaded) {
+        badge.textContent = 'Model loaded';
+        badge.style.background = '#1f6b3a';
+      } else {
+        badge.textContent = error ? 'Model error' : 'No model';
+        badge.style.background = '#9b1c1c';
+      }
+      const btn = document.getElementById('toggleAuto');
+      btn.disabled = !loaded && mode !== 'auto';
+    }
+
+    function showError(text) {
+      const box = document.getElementById('errorBox');
+      if (text) {
+        box.textContent = text;
+        box.style.display = 'block';
+      } else {
+        box.style.display = 'none';
+      }
     }
 
     function renderSensors(frame) {
@@ -136,6 +171,7 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
         const res = await fetch('/api/v1/state');
         const data = await res.json();
         mode = data.mode || 'manual';
+        renderModelStatus(data.model_loaded, data.model_load_error);
         renderMode();
         renderSensors(data.latest_frame || {});
         renderDecision(data.latest_command_decision, data.command);

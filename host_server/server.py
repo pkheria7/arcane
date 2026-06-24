@@ -73,8 +73,8 @@ class VehicleRequestHandler(BaseHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-                mode = self.processor.update_mode(payload)
-                self._write_json({"mode": mode})
+                result = self.processor.update_mode(payload)
+                self._write_json(result)
             except Exception as exc:
                 self._write_error(exc)
             return
@@ -128,8 +128,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--model", default=None)
-    parser.add_argument("--dataset", default="dataset/drives/manual_drive_log.csv")
+    parser.add_argument("--model", default="models/manual/best_manual_model.joblib")
+    parser.add_argument("--dataset", default="dataset/drives/manual_drive_log_6_clean.csv")
     args = parser.parse_args()
     run(args.host, args.port, args.model, args.dataset)
 

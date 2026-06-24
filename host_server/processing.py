@@ -27,11 +27,19 @@ class HostProcessor:
         # Expert controller provides suggestions and safety context.
         self.runtime = NavigationRuntime(model_path=None)
         self.manual_model: ManualModelRuntime | None = None
+        self.model_path = model_path
+        self.model_load_error: str | None = None
         if model_path and Path(model_path).exists():
             try:
                 self.manual_model = ManualModelRuntime(model_path)
-            except Exception:
+                print(f"[host] Loaded manual model from {model_path}")
+            except Exception as exc:
                 self.manual_model = None
+                self.model_load_error = str(exc)
+                print(f"[host] Failed to load manual model from {model_path}: {exc}")
+        elif model_path:
+            self.model_load_error = f"Model file not found: {model_path}"
+            print(f"[host] {self.model_load_error}")
         self.recorder = ManualDriveRecorder(dataset_path)
         self.evidence = EvidenceLogger()
         self.accident_detector = AccidentDetector()
@@ -61,16 +69,25 @@ class HostProcessor:
         ).normalized()
         return self.command
 
-    def update_mode(self, payload: dict) -> str:
+    def update_mode(self, payload: dict) -> dict:
         requested = str(payload.get("mode", self.mode)).lower()
+        if requested == "auto" and self.manual_model is None:
+            return {
+                "mode": self.mode,
+                "model_loaded": False,
+                "error": self.model_load_error or "No manual model loaded; cannot enable autonomous mode.",
+            }
         if requested in ("manual", "auto"):
             self.mode = requested
-        return self.mode
+            print(f"[host] Switched to {self.mode} mode")
+        return {"mode": self.mode, "model_loaded": self.manual_model is not None}
 
     def state(self) -> dict:
         return {
             "command": self.command.__dict__,
             "mode": self.mode,
+            "model_loaded": self.manual_model is not None,
+            "model_load_error": self.model_load_error,
             "latest_frame": self.latest_frame.__dict__ if self.latest_frame else None,
             "latest_image_url": "/api/v1/latest-image?vehicle=latest" if self.latest_image_data else None,
             "latest_image_updated_at": self.latest_image_updated_at,
@@ -163,7 +180,27 @@ class HostProcessor:
         second_best_action = suggestion.second_best_action
 
         if self.mode == "auto" and self.manual_model is not None:
-            pred = self.manual_model.predict(frame)
+            try:
+                pred = self.manual_model.predict(frame)
+            except Exception as exc:
+                print(f"[host] Manual model prediction failed: {exc}")
+                command = ManualCommandState(
+                    speed_cm_s=0.0,
+                    steering=0.0,
+                    direction="forward",
+                    servo_angle=self.command.servo_angle,
+                    stop=True,
+                    sweep_requested=self.command.sweep_requested,
+                ).normalized()
+                decision = Decision(
+                    action=Action.STOP,
+                    reason_code=ReasonCode.EMERGENCY_STOP,
+                    speed=0.0,
+                    probabilities=probabilities,
+                    second_best_action=second_best_action,
+                    explanation=f"Autonomous model prediction failed; stopping as a safety fallback. Error: {exc}",
+                )
+                return command, decision
 
             # Safety override: expert emergency stop always wins
             if suggestion.action == Action.STOP and suggestion.reason_code == ReasonCode.EMERGENCY_STOP:
