@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from time import time
 
@@ -28,4 +29,12 @@ class AccidentPackager:
             "current_frame": frame.__dict__,
         }
         (package_dir / "accident_package.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+        # Copy the incident image into the package for compliance/forensics.
+        if frame.image_path and Path(frame.image_path).exists():
+            image_dest = package_dir / Path(frame.image_path).name
+            shutil.copy2(frame.image_path, image_dest)
+            payload["current_frame"]["image_path"] = str(image_dest)
+            (package_dir / "accident_package.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
         return package_dir

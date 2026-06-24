@@ -20,6 +20,8 @@ def generate_report(package_path: str | Path, output_path: str | Path | None = N
 
     location = data.get("gps_location", {})
     mode = data.get("mode", "manual")
+    frame = data.get("current_frame", {})
+    image_path = frame.get("image_path", "unknown")
     lines = [
         "# Explainable Accident Report",
         "",
@@ -29,7 +31,8 @@ def generate_report(package_path: str | Path, output_path: str | Path | None = N
         f"- Selected action: {selected}",
         f"- Probability of selected action: {probabilities.get(selected, 0.0):.3f}",
         f"- Second-best action: {second[0]} ({float(second[1]):.3f})",
-        f"- Evidence used: sensor history, GPS, camera path, action probabilities, and expert reason codes.",
+        f"- Evidence used: sensor history, GPS, camera frame, action probabilities, and expert reason codes.",
+        f"- Camera frame path: `{image_path}`",
         f"- Avoidability assessment: {avoidable}.",
         "",
         "## What The Car Detected",

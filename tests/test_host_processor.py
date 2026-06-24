@@ -33,3 +33,36 @@ def test_sweep_request_is_one_shot(tmp_path):
     second = processor.process_packet(packet)
     assert first.sweep_requested is True
     assert second.sweep_requested is False
+
+
+def test_display_only_mirrors_pi_command(tmp_path):
+    processor = HostProcessor(
+        dataset_path=str(tmp_path / "drive.csv"),
+        image_root=str(tmp_path / "images"),
+        display_only=True,
+    )
+    packet = {
+        "vehicle_id": "test-car",
+        "frame": SensorFrame.empty().__dict__,
+        "image": None,
+        "scan_images": [],
+        "command": {"action": "left", "steering": -0.55, "speed_cm_s": 4.0, "direction": "forward", "stop": False, "servo_angle": 180},
+    }
+    command = processor.process_packet(packet)
+    assert command.action == "display"
+    assert command.stop is True
+    assert processor.latest_command_decision is not None
+    assert processor.latest_command_decision.action.value == "left"
+    assert processor.command.steering == -0.55
+
+
+def test_display_only_returns_stop_without_pi_command(tmp_path):
+    processor = HostProcessor(
+        dataset_path=str(tmp_path / "drive.csv"),
+        image_root=str(tmp_path / "images"),
+        display_only=True,
+    )
+    packet = {"vehicle_id": "test-car", "frame": SensorFrame.empty().__dict__, "image": None, "scan_images": []}
+    command = processor.process_packet(packet)
+    assert command.action == "display"
+    assert command.stop is True

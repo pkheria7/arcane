@@ -24,9 +24,9 @@ def test_manual_command_normalizes_to_supported_modes():
 def test_steering_to_motor_mix():
     assert steering_to_motor_mix(0.6, 0.0, "forward") == (0.6, 0.6)
     assert steering_to_motor_mix(0.6, 0.0, "reverse") == (-0.6, -0.6)
-    assert steering_to_motor_mix(0.6, -1.0, "forward") == (-0.39, 0.6)
-    assert steering_to_motor_mix(0.6, 1.0, "forward") == (0.6, -0.39)
-    assert steering_to_motor_mix(0.6, -1.0, "reverse") == (0.39, -0.6)
+    assert steering_to_motor_mix(0.6, -1.0, "forward") == (-0.24, 0.6)
+    assert steering_to_motor_mix(0.6, 1.0, "forward") == (0.6, -0.24)
+    assert steering_to_motor_mix(0.6, -1.0, "reverse") == (0.24, -0.6)
 
 
 def test_slight_turn_reduces_inner_tire_aggressively():

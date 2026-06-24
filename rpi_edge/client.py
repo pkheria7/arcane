@@ -4,15 +4,19 @@ import argparse
 import json
 from socket import timeout as SocketTimeout
 from pathlib import Path
-from time import sleep
+from time import sleep, time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from edge_protocol.messages import EdgePacket, ImagePayload
+from navigation_ai.actions import Action
+from navigation_ai.expert_controller import ExpertController, NavigationConfig
+from navigation_ai.gap_detector import image_gap_scores
 from sensor_layer.config import load_vehicle_config
 from sensor_layer.gpio_factory import GpioFactoryError, configure_gpiozero_pin_factory
 from sensor_layer.actuators import PiMotorDriver, PiServo, SimulatedMotorDriver, SimulatedServo
 from sensor_layer.sensors import PiSensorSuite, SimulatedSensorSuite
+from sensor_layer.types import SensorFrame
 
 
 SERVO_FRONT = 90
@@ -26,7 +30,199 @@ LOCAL_EMERGENCY_STOP_DISTANCE_CM = 15.0
 STEERING_DEADZONE = 0.08
 FULL_TURN_THRESHOLD = 0.72
 SLIGHT_TURN_MIN_INNER_RATIO = 0.22
-PIVOT_INNER_REVERSE_RATIO = 0.65
+PIVOT_INNER_REVERSE_RATIO = 0.40
+
+# Autonomy timing / dynamics
+TURN_DURATION = 0.30
+RECOVER_DURATION = 0.25
+SIDE_AVOID_DURATION = 0.25
+HARD_STOP_CLEAR_DISTANCE_CM = 25.0
+TURN_STEERING = 0.65
+AVOID_STEERING = 0.55
+AUTO_SPEED_CM_S = 4.0
+
+
+class LocalAutonomy:
+    """Rule-based autonomy state machine that runs entirely on the Pi."""
+
+    def __init__(self, max_speed_cm_s: float = AUTO_SPEED_CM_S) -> None:
+        self.expert = ExpertController(
+            NavigationConfig(
+                constant_speed=max_speed_cm_s / MAX_SPEED_CM_S,
+                turn_speed=max_speed_cm_s / MAX_SPEED_CM_S,
+                emergency_distance_cm=EMERGENCY_SCAN_DISTANCE_CM,
+            )
+        )
+        self.max_speed = max_speed_cm_s
+        self.state = "drive"
+        self.state_start = 0.0
+        self.turn_direction = 0
+
+    def decide(self, frame: SensorFrame) -> dict:
+        now = time()
+        front_emergency = bool(frame.ir_center) or frame.ultrasonic_distance < LOCAL_EMERGENCY_STOP_DISTANCE_CM
+        front_blocked = (
+            front_emergency
+            or frame.ultrasonic_distance < EMERGENCY_SCAN_DISTANCE_CM
+            or frame.center_gap_score < 0.35
+        )
+
+        # State transitions
+        if self.state == "drive":
+            if front_emergency:
+                self.state = "hard_stop"
+                self.state_start = now
+                print(f"[edge] auto: drive -> hard_stop (emergency)", flush=True)
+            elif front_blocked:
+                self.state = "stop_scan"
+                self.state_start = now
+                self.turn_direction = 0
+                print(f"[edge] auto: drive -> stop_scan", flush=True)
+            elif frame.ir_left:
+                self.state = "side_avoid_right"
+                self.state_start = now
+                print(f"[edge] auto: drive -> side_avoid_right (left IR)", flush=True)
+            elif frame.ir_right:
+                self.state = "side_avoid_left"
+                self.state_start = now
+                print(f"[edge] auto: drive -> side_avoid_left (right IR)", flush=True)
+
+        elif self.state == "hard_stop":
+            cleared = (
+                not bool(frame.ir_center)
+                and frame.ultrasonic_distance >= HARD_STOP_CLEAR_DISTANCE_CM
+            )
+            if cleared:
+                self.state = "drive"
+                print(f"[edge] auto: hard_stop -> drive (cleared)", flush=True)
+
+        elif self.state == "stop_scan":
+            if not front_blocked:
+                self.state = "drive"
+                print(f"[edge] auto: stop_scan -> drive (cleared)", flush=True)
+            else:
+                # choose direction immediately; no extra delay
+                self.turn_direction = self._choose_turn_direction(frame)
+                self.state = "turn"
+                self.state_start = now
+                print(
+                    f"[edge] auto: stop_scan -> turn ({'left' if self.turn_direction < 0 else 'right'})",
+                    flush=True,
+                )
+
+        elif self.state == "turn":
+            if now - self.state_start >= TURN_DURATION:
+                self.state = "recover"
+                self.state_start = now
+                print(f"[edge] auto: turn -> recover", flush=True)
+
+        elif self.state in ("side_avoid_left", "side_avoid_right"):
+            if now - self.state_start >= SIDE_AVOID_DURATION:
+                self.state = "recover"
+                self.state_start = now
+                print(f"[edge] auto: side_avoid -> recover", flush=True)
+
+        elif self.state == "recover":
+            if now - self.state_start >= RECOVER_DURATION:
+                self.state = "drive"
+                print(f"[edge] auto: recover -> drive", flush=True)
+
+        # Generate command from current state
+        return self._command_for_state(frame)
+
+    def _choose_turn_direction(self, frame: SensorFrame) -> int:
+        """Return -1 for left turn, +1 for right turn."""
+        return -1 if frame.left_gap_score >= frame.right_gap_score else 1
+
+    def _command_for_state(self, frame: SensorFrame) -> dict:
+        if self.state == "hard_stop":
+            return {
+                "action": "stop",
+                "stop": True,
+                "speed_cm_s": 0.0,
+                "steering": 0.0,
+                "direction": "forward",
+            }
+
+        if self.state == "stop_scan":
+            return {
+                "action": "stop",
+                "stop": True,
+                "speed_cm_s": 0.0,
+                "steering": 0.0,
+                "direction": "forward",
+            }
+
+        if self.state == "turn":
+            steering = float(self.turn_direction) * TURN_STEERING
+            return {
+                "action": "right" if self.turn_direction > 0 else "left",
+                "stop": False,
+                "speed_cm_s": self.max_speed,
+                "steering": steering,
+                "direction": "forward",
+            }
+
+        if self.state == "side_avoid_left":
+            return {
+                "action": "left",
+                "stop": False,
+                "speed_cm_s": self.max_speed,
+                "steering": -AVOID_STEERING,
+                "direction": "forward",
+            }
+
+        if self.state == "side_avoid_right":
+            return {
+                "action": "right",
+                "stop": False,
+                "speed_cm_s": self.max_speed,
+                "steering": AVOID_STEERING,
+                "direction": "forward",
+            }
+
+        if self.state == "recover":
+            return {
+                "action": "straight",
+                "stop": False,
+                "speed_cm_s": self.max_speed,
+                "steering": 0.0,
+                "direction": "forward",
+            }
+
+        # drive state: let expert decide if front is blocked, otherwise straight
+        decision = self.expert.decide(frame)
+        if decision.action == Action.STOP:
+            return {
+                "action": "stop",
+                "stop": True,
+                "speed_cm_s": 0.0,
+                "steering": 0.0,
+                "direction": "forward",
+            }
+        if decision.action == Action.LEFT:
+            return {
+                "action": "left",
+                "stop": False,
+                "speed_cm_s": self.max_speed,
+                "steering": -TURN_STEERING,
+                "direction": "forward",
+            }
+        if decision.action == Action.RIGHT:
+            return {
+                "action": "right",
+                "stop": False,
+                "speed_cm_s": self.max_speed,
+                "steering": TURN_STEERING,
+                "direction": "forward",
+            }
+        return {
+            "action": "straight",
+            "stop": False,
+            "speed_cm_s": self.max_speed,
+            "steering": 0.0,
+            "direction": "forward",
+        }
 
 
 def apply_command(motor, servo, command: dict) -> tuple[float, float]:
@@ -103,6 +299,14 @@ def set_servo_for_obstacles(servo, frame) -> None:
         servo.set_angle(SERVO_FRONT)
 
 
+def servo_angle_for_obstacles(frame: SensorFrame) -> int:
+    if frame.ir_left:
+        return SERVO_LEFT
+    if frame.ir_right:
+        return SERVO_RIGHT
+    return SERVO_FRONT
+
+
 def capture_gap_scan(sensors, servo, image_dir: Path, jpeg_quality: int, prefix: str) -> list[ImagePayload]:
     scan_images = []
     for angle in SCAN_ANGLES:
@@ -111,6 +315,61 @@ def capture_gap_scan(sensors, servo, image_dir: Path, jpeg_quality: int, prefix:
         if scan:
             scan_images.append(scan)
     return scan_images
+
+
+def gap_scores_from_scan(scan_images: list[ImagePayload], upload_dir: Path) -> dict[int, tuple[float, float, float]]:
+    scores: dict[int, tuple[float, float, float]] = {}
+    for image in scan_images:
+        path = image.write_to(upload_dir, f"local_scan_{int(time() * 1000)}")
+        scores[image.angle] = image_gap_scores(str(path))
+    return scores
+
+
+def frame_with_gap_scores(
+    frame: SensorFrame,
+    sensors,
+    servo,
+    image_dir: Path,
+    send_camera: bool,
+    jpeg_quality: int,
+) -> tuple[SensorFrame, ImagePayload | None, list[ImagePayload]]:
+    """Capture the current view, run a gap scan if needed, and return an updated frame."""
+    # Point camera at obstacle side before capturing evidence frame
+    servo.set_angle(servo_angle_for_obstacles(frame))
+    cycle_image = capture_payload(sensors, servo, image_dir, "local_cycle", jpeg_quality) if send_camera else None
+    frame = frame.__class__(**{**frame.__dict__, "servo_angle": getattr(servo, "angle", 0)})
+
+    needs_gap_scan = (
+        send_camera
+        and (
+            bool(frame.ir_center)
+            or frame.ultrasonic_distance < EMERGENCY_SCAN_DISTANCE_CM
+            or frame.ultrasonic_distance < GAP_SCAN_DISTANCE_CM
+        )
+    )
+    scan_images: list[ImagePayload] = []
+    if needs_gap_scan:
+        scan_images = capture_gap_scan(sensors, servo, image_dir, jpeg_quality, "local_gap_scan")
+        scores = gap_scores_from_scan(scan_images, image_dir)
+        left_gap = scores.get(150, (0.0, 0.0, 0.0))[0]
+        center_gap = scores.get(90, (0.0, 0.5, 0.0))[1]
+        right_gap = scores.get(30, (0.0, 0.0, 0.0))[2]
+        servo.set_angle(SERVO_FRONT)
+    else:
+        if cycle_image:
+            path = cycle_image.write_to(image_dir, f"local_cycle_{int(time() * 1000)}")
+            left_gap, center_gap, right_gap = image_gap_scores(str(path))
+        else:
+            left_gap, center_gap, right_gap = 0.5, 0.5, 0.5
+
+    frame = frame.__class__(**{
+        **frame.__dict__,
+        "left_gap_score": left_gap,
+        "center_gap_score": center_gap,
+        "right_gap_score": right_gap,
+        "servo_angle": getattr(servo, "angle", 0),
+    })
+    return frame, cycle_image, scan_images
 
 
 def build_packet(
@@ -156,6 +415,9 @@ def run(
     camera_width: int,
     camera_height: int,
     jpeg_quality: int,
+    local_autonomy: bool,
+    model_path: str | None,
+    max_speed_cm_s: float,
 ) -> None:
     if simulate:
         sensors = SimulatedSensorSuite()
@@ -199,51 +461,79 @@ def run(
             raise SystemExit(2) from exc
 
     image_dir = Path("/tmp/arcane_edge_images")
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    autonomy = LocalAutonomy(max_speed_cm_s=max_speed_cm_s) if local_autonomy else None
     print(f"[edge] Posting telemetry to {host_url.rstrip('/')}/api/v1/cycle", flush=True)
+    if local_autonomy:
+        print("[edge] LOCAL AUTONOMY enabled; Pi is the authority, Mac is display-only", flush=True)
+
     command: dict = {"stop": True, "action": "stop"}
     try:
         while True:
-            # Read sensors first so we can apply a local emergency reflex before
-            # waiting for the host response.
             frame = sensors.read_frame(servo_angle=getattr(servo, "angle", 0), image_path=None)
-            local_emergency = bool(frame.ir_center) or frame.ultrasonic_distance < LOCAL_EMERGENCY_STOP_DISTANCE_CM
-            if local_emergency:
-                # Hard reflex: stop motors immediately before waiting for host.
-                motor.stop()
+
+            if local_autonomy:
+                frame, cycle_image, scan_images = frame_with_gap_scores(
+                    frame, sensors, servo, image_dir, send_camera, jpeg_quality
+                )
+                command = autonomy.decide(frame)
+                apply_command(motor, servo, command)
+
+                # Always respect host-originated emergency override if Mac operator
+                # sends a stop, but otherwise the Pi ignores the host command.
+                packet = EdgePacket.from_frame(
+                    vehicle_id=vehicle_id,
+                    frame=frame,
+                    image=cycle_image,
+                    scan_images=scan_images,
+                    command=command,
+                )
+                host_command = safe_post_packet(host_url, packet, timeout)
+                if host_command:
+                    print(
+                        f"[edge] auto: host mirrored command={host_command.get('action')} "
+                        f"stop={host_command.get('stop')} (Pi authority; not applied)",
+                        flush=True,
+                    )
+            else:
+                local_emergency = bool(frame.ir_center) or frame.ultrasonic_distance < LOCAL_EMERGENCY_STOP_DISTANCE_CM
+                if local_emergency:
+                    motor.stop()
+                    print(
+                        f"[edge] LOCAL EMERGENCY STOP ir_center={frame.ir_center} "
+                        f"ultrasonic={frame.ultrasonic_distance:.1f}cm",
+                        flush=True,
+                    )
+
+                force_gap_scan = bool(command.get("sweep_requested", False))
+                packet = build_packet(
+                    vehicle_id,
+                    sensors,
+                    servo,
+                    image_dir,
+                    send_camera,
+                    jpeg_quality,
+                    force_gap_scan=force_gap_scan,
+                    frame=frame,
+                )
+                command = safe_post_packet(host_url, packet, timeout)
+                if command is None:
+                    motor.stop()
+                    sleep(max(cycle_delay, 1.0))
+                    command = {"stop": True, "action": "stop"}
+                    continue
+                left_speed, right_speed = apply_command(motor, servo, command)
                 print(
-                    f"[edge] LOCAL EMERGENCY STOP ir_center={frame.ir_center} "
-                    f"ultrasonic={frame.ultrasonic_distance:.1f}cm",
+                    "[edge] command="
+                    f"action={command.get('action')} stop={command.get('stop')} "
+                    f"speed_cm_s={command.get('speed_cm_s')} steering={command.get('steering')} "
+                    f"direction={command.get('direction')} "
+                    f"left_pwm={left_speed:.2f} right_pwm={right_speed:.2f} "
+                    f"servo={getattr(servo, 'angle', command.get('servo_angle'))}",
                     flush=True,
                 )
 
-            # Include a gap scan if the previous host command requested one.
-            force_gap_scan = bool(command.get("sweep_requested", False))
-            packet = build_packet(
-                vehicle_id,
-                sensors,
-                servo,
-                image_dir,
-                send_camera,
-                jpeg_quality,
-                force_gap_scan=force_gap_scan,
-                frame=frame,
-            )
-            command = safe_post_packet(host_url, packet, timeout)
-            if command is None:
-                motor.stop()
-                sleep(max(cycle_delay, 1.0))
-                command = {"stop": True, "action": "stop"}
-                continue
-            left_speed, right_speed = apply_command(motor, servo, command)
-            print(
-                "[edge] command="
-                f"action={command.get('action')} stop={command.get('stop')} "
-                f"speed_cm_s={command.get('speed_cm_s')} steering={command.get('steering')} "
-                f"direction={command.get('direction')} "
-                f"left_pwm={left_speed:.2f} right_pwm={right_speed:.2f} "
-                f"servo={getattr(servo, 'angle', command.get('servo_angle'))}",
-                flush=True,
-            )
             sleep(cycle_delay)
     except KeyboardInterrupt:
         motor.stop()
@@ -264,6 +554,9 @@ def main() -> None:
     parser.add_argument("--camera-width", type=int, default=160)
     parser.add_argument("--camera-height", type=int, default=120)
     parser.add_argument("--jpeg-quality", type=int, default=30)
+    parser.add_argument("--local-autonomy", action="store_true", help="Run rule-based autonomy on the Pi; Mac is display-only.")
+    parser.add_argument("--model", default=None, help="Optional scikit-learn model for local autonomy (default is rule-based).")
+    parser.add_argument("--max-speed", type=float, default=AUTO_SPEED_CM_S, help="Maximum autonomous speed in cm/s.")
     args = parser.parse_args()
     run(
         args.host_url,
@@ -276,6 +569,9 @@ def main() -> None:
         args.camera_width,
         args.camera_height,
         args.jpeg_quality,
+        args.local_autonomy,
+        args.model,
+        args.max_speed,
     )
 
 

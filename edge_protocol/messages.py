@@ -42,6 +42,7 @@ class EdgePacket:
     frame: dict[str, Any]
     image: dict[str, Any] | None = None
     scan_images: list[dict[str, Any]] | None = None
+    command: dict[str, Any] | None = None
 
     @classmethod
     def from_frame(
@@ -50,12 +51,14 @@ class EdgePacket:
         frame: SensorFrame,
         image: ImagePayload | None = None,
         scan_images: list[ImagePayload] | None = None,
+        command: dict[str, Any] | None = None,
     ) -> "EdgePacket":
         return cls(
             vehicle_id=vehicle_id,
             frame=asdict(frame),
             image=asdict(image) if image else None,
             scan_images=[asdict(item) for item in scan_images or []],
+            command=command,
         )
 
     def to_json_dict(self) -> dict[str, Any]:

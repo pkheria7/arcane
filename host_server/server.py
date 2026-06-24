@@ -117,10 +117,15 @@ class VehicleRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def run(host: str, port: int, model_path: str | None, dataset_path: str) -> None:
-    VehicleRequestHandler.processor = HostProcessor(model_path=model_path, dataset_path=dataset_path)
+def run(host: str, port: int, model_path: str | None, dataset_path: str, display_only: bool = False) -> None:
+    VehicleRequestHandler.processor = HostProcessor(
+        model_path=model_path,
+        dataset_path=dataset_path,
+        display_only=display_only,
+    )
     server = ThreadingHTTPServer((host, port), VehicleRequestHandler)
-    print(f"ARCANE host processor listening on http://{host}:{port}")
+    mode_label = "display-only" if display_only else "command"
+    print(f"ARCANE host processor listening on http://{host}:{port} ({mode_label} mode)")
     server.serve_forever()
 
 
@@ -130,8 +135,13 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--model", default="models/manual/best_manual_model.joblib")
     parser.add_argument("--dataset", default="dataset/drives/manual_drive_log_6_clean.csv")
+    parser.add_argument(
+        "--display-only",
+        action="store_true",
+        help="Receive telemetry and update the UI but never command the vehicle (Pi is the authority).",
+    )
     args = parser.parse_args()
-    run(args.host, args.port, args.model, args.dataset)
+    run(args.host, args.port, args.model, args.dataset, display_only=args.display_only)
 
 
 if __name__ == "__main__":

@@ -121,6 +121,29 @@ python scripts/test_servo.py
 
 The Pi sends IR, ultrasonic, GPS, MPU6050, and camera frames to the Mac. It receives only manual command fields: `speed_cm_s`, `steering`, `servo_angle`, and `stop`, then applies those to the L298N and servo.
 
+## Pi-Only Autonomous Mode (Rule Based)
+
+By default the Mac runs the autonomy model and the Pi is a thin edge device. You can also run rule-based autonomy entirely on the Pi and use the Mac only as a display/dashboard:
+
+```bash
+# Mac (display only)
+python -m host_server.server --host 0.0.0.0 --port 8765 --display-only
+
+# Raspberry Pi (local autonomy)
+python -m rpi_edge.client --host-url http://192.168.1.25:8765 --local-autonomy
+```
+
+In this mode the Pi:
+
+- reads left/center/right IR and ultrasonic sensors,
+- points the camera toward any active side IR sensor,
+- stops for center IR or ultrasonic < 15 cm,
+- scans and turns toward the safer side for obstacles at 15–40 cm,
+- steers away from left/right IR obstacles,
+- sends telemetry + camera frames to the Mac for the UI and compliance logs.
+
+A 2 GB Raspberry Pi can comfortably run this rule-based stack at low camera resolution (`--camera-width 160 --camera-height 120 --jpeg-quality 30`).
+
 ## Manual Data Collection
 
 Use the Mac dashboard as the remote control:

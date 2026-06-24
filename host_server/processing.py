@@ -23,6 +23,7 @@ class HostProcessor:
         model_path: str | None = None,
         dataset_path: str = "dataset/drives/manual_drive_log.csv",
         image_root: str = "dataset/images/host_uploads",
+        display_only: bool = False,
     ) -> None:
         # Expert controller provides suggestions and safety context.
         self.runtime = NavigationRuntime(model_path=None)
@@ -45,6 +46,7 @@ class HostProcessor:
         self.accident_detector = AccidentDetector()
         self.packager = AccidentPackager()
         self.image_root = Path(image_root)
+        self.display_only = display_only
         self.command = ManualCommandState()
         self.mode = "manual"
         self.auto_state = "drive"
@@ -96,6 +98,7 @@ class HostProcessor:
     def state(self) -> dict:
         return {
             "command": self.command.__dict__,
+            "display_only": self.display_only,
             "mode": self.mode,
             "auto_state": self.auto_state,
             "model_loaded": self.manual_model is not None,
@@ -150,7 +153,10 @@ class HostProcessor:
             "front_free_space_score": front_gap_metrics.get("free_space_score", 0.5),
         }
 
-        command_for_response, decision = self._resolve_command(frame, suggestion, has_scan_scores, front_gap_metrics)
+        pi_command_dict = packet.get("command")
+        command_for_response, decision = self._resolve_command(
+            frame, suggestion, has_scan_scores, front_gap_metrics, pi_command_dict
+        )
         self.latest_command_decision = decision
         self.recorder.append(vehicle_id, frame, command_for_response, scan_metrics, best_gap_angle, best_gap_score)
 
@@ -174,6 +180,24 @@ class HostProcessor:
                 servo_angle=self.command.servo_angle,
                 stop=self.command.stop,
                 sweep_requested=False,
+            )
+
+        if self.display_only:
+            return HostCommand(
+                action="display",
+                speed=0.0,
+                servo_angle=command_for_response.servo_angle,
+                probabilities=decision.probabilities,
+                reason_code=decision.reason_code.value,
+                explanation=f"Pi-local autonomy is active. Observed command: {decision.explanation}",
+                speed_cm_s=0.0,
+                steering=0.0,
+                direction="forward",
+                stop=True,
+                sweep_requested=False,
+                event_recorded=event_recorded,
+                accident_report_path=accident_report_path,
+                mode=self.mode,
             )
 
         action_label = "stop" if command_for_response.stop else ("autonomous" if self.mode == "auto" else "manual")
@@ -201,10 +225,14 @@ class HostProcessor:
         suggestion: Decision,
         has_scan_scores: bool = False,
         front_gap_metrics: dict | None = None,
+        pi_command_dict: dict | None = None,
     ) -> tuple[ManualCommandState, Decision]:
         probabilities = suggestion.probabilities
         second_best_action = suggestion.second_best_action
         front_gap_metrics = front_gap_metrics or {}
+
+        if self.display_only:
+            return self._display_only_command(frame, suggestion, pi_command_dict)
 
         if self.mode == "auto" and self.manual_model is not None:
             return self._auto_state_machine(frame, suggestion, has_scan_scores, front_gap_metrics)
@@ -219,6 +247,51 @@ class HostProcessor:
             probabilities=probabilities,
             second_best_action=second_best_action,
             explanation="Manual Mac dashboard command is active.",
+        )
+        return command, decision
+
+    def _display_only_command(
+        self,
+        frame: SensorFrame,
+        suggestion: Decision,
+        pi_command_dict: dict | None,
+    ) -> tuple[ManualCommandState, Decision]:
+        """In display-only mode the Pi is the authority; mirror its command for the UI."""
+        if pi_command_dict:
+            command = ManualCommandState(
+                speed_cm_s=float(pi_command_dict.get("speed_cm_s", 0.0)),
+                steering=float(pi_command_dict.get("steering", 0.0)),
+                direction=str(pi_command_dict.get("direction", "forward")),
+                servo_angle=int(pi_command_dict.get("servo_angle", self.command.servo_angle)),
+                stop=bool(pi_command_dict.get("stop", True)),
+                sweep_requested=False,
+            ).normalized()
+            action = self._action_from_steering(command.steering, command.stop)
+            explanation = (
+                f"Pi-local autonomy command mirrored on Mac display. "
+                f"action={action.value}, speed={command.speed_cm_s:.1f} cm/s, "
+                f"steering={command.steering:+.2f}, servo={command.servo_angle}."
+            )
+        else:
+            command = ManualCommandState(
+                speed_cm_s=0.0,
+                steering=0.0,
+                direction="forward",
+                servo_angle=self.command.servo_angle,
+                stop=True,
+                sweep_requested=False,
+            ).normalized()
+            action = Action.STOP
+            explanation = "Display-only mode; no Pi command received yet."
+
+        self.command = command
+        decision = Decision(
+            action=action,
+            reason_code=suggestion.reason_code,
+            speed=command.speed_cm_s,
+            probabilities=suggestion.probabilities,
+            second_best_action=suggestion.second_best_action,
+            explanation=explanation,
         )
         return command, decision
 
