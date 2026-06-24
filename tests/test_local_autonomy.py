@@ -39,20 +39,37 @@ def test_local_autonomy_drives_straight_when_clear():
     assert cmd["speed_cm_s"] > 0
 
 
+def _step(auto, **updates):
+    f = frame(**updates)
+    auto.update_ultrasonic_filter(f)
+    return auto.decide(f)
+
+
 def test_local_autonomy_chooses_gap_direction_for_front_obstacle():
     auto = LocalAutonomy()
-    # Front blocked (ultrasonic in 15-40 cm range) but not an emergency.
+    # Front blocked (ultrasonic in 15-25 cm range) but not an emergency.
+    # Ultrasonic must be below threshold for 3 consecutive cycles before it is trusted.
     # Right side has more space -> turn right.
-    cmd = auto.decide(
-        frame(ultrasonic_distance=30.0, left_gap_score=0.1, right_gap_score=0.8)
-    )
+    for _ in range(3):
+        cmd = _step(auto, ultrasonic_distance=20.0, left_gap_score=0.1, right_gap_score=0.8)
     assert cmd["stop"] is True
-    # Simulate next cycle in stop_scan -> should transition to turn.
-    cmd = auto.decide(
-        frame(ultrasonic_distance=30.0, left_gap_score=0.1, right_gap_score=0.8)
-    )
+    # Next cycle in stop_scan -> transition to turn.
+    cmd = _step(auto, ultrasonic_distance=20.0, left_gap_score=0.1, right_gap_score=0.8)
     assert cmd["action"] == "right"
     assert cmd["steering"] > 0
+
+
+def test_single_low_ultrasonic_does_not_stop():
+    auto = LocalAutonomy()
+    cmd = _step(auto, ultrasonic_distance=20.0)
+    assert cmd["action"] == "straight"
+
+
+def test_three_low_ultrasonic_readings_stop():
+    auto = LocalAutonomy()
+    for _ in range(3):
+        cmd = _step(auto, ultrasonic_distance=20.0)
+    assert cmd["stop"] is True
 
 
 def test_steering_pivot_is_softened():
