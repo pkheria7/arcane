@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class RuntimeConfig:
     jpeg_quality: int = 35
     pin_factory: str = "auto"
     camera_enabled: bool = True
+    records_dir: Path = Path("finally_records")
 
 
 @dataclass(frozen=True)

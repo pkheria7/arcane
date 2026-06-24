@@ -18,6 +18,9 @@ class SensorSnapshot:
     right_gap: float = 0.5
     acceleration_g: float = 0.0
     gyro_z_dps: float = 0.0
+    gps_lat: float | None = None
+    gps_lon: float | None = None
+    gps_fix_quality: int = 0
     error: str | None = None
 
     @classmethod
@@ -66,9 +69,10 @@ class Telemetry:
     camera_updated_at: float = 0.0
     loop_hz: float = 0.0
     error: str | None = None
+    active_recording: dict | None = None
+    latest_record: dict | None = None
 
     def to_dict(self) -> dict:
         data = asdict(self)
         data.pop("last_camera_jpeg", None)
         return data
-

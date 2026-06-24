@@ -30,6 +30,8 @@ Open the UI from any phone or laptop on the same network:
 http://<raspberry-pi-ip>:8080
 ```
 
+The UI uses Leaflet with OpenStreetMap tiles. When the GPS module has a fix, it shows the current coordinates, a live marker, and a short trail of recent movement.
+
 Find the Pi IP with:
 
 ```bash
@@ -74,3 +76,22 @@ If one wheel spins backward during a forward test, update that wheel's `invert` 
 ## Behavior
 
 The rule controller uses IR, ultrasonic, and low-rate camera gap scores. When the front is blocked, it no longer waits forever in hard stop. It pauses, scans, reverses, pivots toward the safer side, recovers, and re-checks.
+
+## Evidence Records For Compliance Reports
+
+The Pi records evidence packages when an IR sensor is active:
+
+- Right IR active: servo turns to `0` and records the right-side scene.
+- Center IR active: servo turns to `90` and records the front scene.
+- Left IR active: servo turns to `180` and records the left-side scene.
+- The camera stays locked to the triggering IR direction until that same IR goes low.
+- Every event folder contains `scene.mp4`, `actions.jsonl`, and `manifest.json`.
+- `actions.jsonl` logs sensor values, controller state, reason, and motor command for every control loop.
+
+Records are stored under:
+
+```text
+finally_records/
+```
+
+The web UI lists recent evidence records and provides a `Download record` link. Download the `.zip` on your Mac and run the Mac-side vision/LLM/PDF generator against `scene.mp4` plus `actions.jsonl`.

@@ -8,6 +8,7 @@ from .controller import RuleController
 from .hardware import PiHardware, SimulatedHardware
 from .models import SensorSnapshot, Telemetry
 from .motors import FourMotorDriver, SimulatedFourMotorDriver
+from .recording import IRSceneRecorder
 from .ui_server import SharedState, start_ui_server
 from .vision import score_jpeg
 
@@ -49,7 +50,7 @@ def run(config: AppConfig, simulate: bool = False, no_ui: bool = False) -> None:
     server = None
     if not no_ui:
         try:
-            server = start_ui_server(shared, config.runtime.host, config.runtime.port)
+            server = start_ui_server(shared, config.runtime.host, config.runtime.port, config.runtime.records_dir)
             print(f"[finally] UI listening on http://{config.runtime.host}:{config.runtime.port}", flush=True)
         except Exception as exc:
             print(f"[finally] UI failed to start; autonomy continues: {exc}", flush=True)
@@ -57,6 +58,7 @@ def run(config: AppConfig, simulate: bool = False, no_ui: bool = False) -> None:
     hardware = SimulatedHardware(config) if simulate else PiHardware(config)
     motors = SimulatedFourMotorDriver() if simulate else FourMotorDriver(config)
     controller = RuleController(config.autonomy)
+    recorder = IRSceneRecorder(config.runtime.records_dir, fps=config.runtime.camera_hz)
     camera_interval = 1.0 / max(0.1, config.runtime.camera_hz)
     control_interval = 1.0 / max(1.0, config.runtime.control_hz)
     next_camera = 0.0
@@ -66,23 +68,35 @@ def run(config: AppConfig, simulate: bool = False, no_ui: bool = False) -> None:
     try:
         while telemetry.running:
             loop_start = time()
-            if loop_start >= next_camera:
-                jpeg = hardware.capture_camera()
-                if jpeg:
-                    telemetry.last_camera_jpeg = jpeg
-                    telemetry.camera_updated_at = loop_start
-                next_camera = loop_start + camera_interval
-
             try:
                 sensors = hardware.read_sensors()
                 emergency_stop = shared.snapshot().emergency_stop
-                if controller.state == "scan":
+                new_jpeg: bytes | None = None
+                active_ir = recorder.sync_trigger(sensors)
+                active_ir_angle = recorder.active_angle
+                if active_ir_angle is not None:
+                    hardware.set_servo(active_ir_angle)
+                    sensors = SensorSnapshot(**{**sensors.__dict__, "servo_angle": active_ir_angle})
+                elif controller.state == "scan":
                     sensors, scan_jpeg = scan_gaps(hardware, config, sensors)
                     if scan_jpeg:
+                        new_jpeg = scan_jpeg
                         telemetry.last_camera_jpeg = scan_jpeg
                         telemetry.camera_updated_at = time()
+
+                if loop_start >= next_camera or (active_ir_angle is not None and recorder.frame_count == 0):
+                    jpeg = hardware.capture_camera()
+                    if jpeg:
+                        new_jpeg = jpeg
+                        telemetry.last_camera_jpeg = jpeg
+                        telemetry.camera_updated_at = loop_start
+                    next_camera = loop_start + camera_interval
+
                 decision = controller.update(sensors, emergency_stop=emergency_stop, now=loop_start)
-                hardware.set_servo(servo_for_state(decision.state, decision.turn_direction))
+                if active_ir_angle is not None:
+                    hardware.set_servo(active_ir_angle)
+                else:
+                    hardware.set_servo(servo_for_state(decision.state, decision.turn_direction))
                 telemetry.emergency_stop = emergency_stop
                 if emergency_stop:
                     motors.stop()
@@ -103,6 +117,9 @@ def run(config: AppConfig, simulate: bool = False, no_ui: bool = False) -> None:
                 telemetry.reason = reason
                 telemetry.loop_hz = 1.0 / dt
                 telemetry.error = sensors.error
+                recorder.record_loop(sensors, decision, state, reason, new_jpeg)
+                telemetry.active_recording = recorder.active_summary()
+                telemetry.latest_record = recorder.latest_record
                 shared.update(telemetry)
             except Exception as exc:
                 motors.stop()
@@ -117,6 +134,7 @@ def run(config: AppConfig, simulate: bool = False, no_ui: bool = False) -> None:
     except KeyboardInterrupt:
         print("\n[finally] stopping", flush=True)
     finally:
+        recorder.finish("program stopped")
         motors.stop()
         hardware.close()
         if server:

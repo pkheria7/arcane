@@ -7,6 +7,7 @@ cfg_mod = importlib.import_module("finally.config")
 controller_mod = importlib.import_module("finally.controller")
 models_mod = importlib.import_module("finally.models")
 motors_mod = importlib.import_module("finally.motors")
+recording_mod = importlib.import_module("finally.recording")
 
 
 def sensor(**updates):
@@ -69,3 +70,22 @@ def test_motor_mix_four_wheel_signs():
     assert right.rear_left > 0
     assert right.front_right < 0
     assert right.rear_right < 0
+
+
+def test_ir_recorder_latches_until_same_sensor_clears(tmp_path):
+    rec = recording_mod.IRSceneRecorder(tmp_path)
+    rec.sync_trigger(sensor(ir_right=1))
+    assert rec.active_sensor == "right"
+    assert rec.active_angle == 0
+
+    rec.sync_trigger(sensor(ir_right=1, ir_left=1))
+    assert rec.active_sensor == "right"
+    assert rec.active_angle == 0
+
+    rec.sync_trigger(sensor(ir_left=1))
+    assert rec.active_sensor == "left"
+    assert rec.active_angle == 180
+
+    rec.sync_trigger(sensor())
+    assert rec.active_sensor is None
+    assert rec.latest_record is not None

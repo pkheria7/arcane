@@ -37,6 +37,9 @@ class SimulatedHardware:
             left_gap=gaps.left,
             center_gap=0.2 if front_block else gaps.center,
             right_gap=gaps.right,
+            gps_lat=28.6139 + self.tick * 0.000001,
+            gps_lon=77.2090 + self.tick * 0.000001,
+            gps_fix_quality=1,
         )
 
     def capture_camera(self) -> bytes | None:
@@ -116,6 +119,7 @@ class PiHardware:
     def read_sensors(self) -> SensorSnapshot:
         reading = self.ultrasonic.measure()
         imu = self.imu.read()
+        gps = self.gps.read()
         gaps = score_jpeg(self.latest_jpeg)
         return SensorSnapshot(
             timestamp=time(),
@@ -130,6 +134,9 @@ class PiHardware:
             right_gap=gaps.right,
             acceleration_g=imu.acceleration,
             gyro_z_dps=imu.gyro_z,
+            gps_lat=gps.lat,
+            gps_lon=gps.lon,
+            gps_fix_quality=gps.fix_quality,
             error=reading.error,
         )
 
@@ -166,4 +173,3 @@ class PiHardware:
             self.ultrasonic.close()
         except Exception:
             return
-
