@@ -180,6 +180,21 @@ class HostProcessor:
         second_best_action = suggestion.second_best_action
 
         if self.mode == "auto" and self.manual_model is not None:
+            # Hybrid safety override: rule-based obstacle avoidance wins over the learned model
+            # because the collected dataset does not yet show consistent obstacle-avoidance steering.
+            obstacle_command, obstacle_reason, obstacle_explanation = self._obstacle_avoidance(frame)
+            if obstacle_command is not None:
+                action = self._action_from_steering(obstacle_command.steering, obstacle_command.stop)
+                decision = Decision(
+                    action=action,
+                    reason_code=obstacle_reason,
+                    speed=obstacle_command.speed_cm_s,
+                    probabilities=probabilities,
+                    second_best_action=second_best_action,
+                    explanation=obstacle_explanation,
+                )
+                return obstacle_command, decision
+
             try:
                 pred = self.manual_model.predict(frame)
             except Exception as exc:
@@ -202,7 +217,7 @@ class HostProcessor:
                 )
                 return command, decision
 
-            # Safety override: expert emergency stop always wins
+            # Fallback safety override: expert emergency stop always wins
             if suggestion.action == Action.STOP and suggestion.reason_code == ReasonCode.EMERGENCY_STOP:
                 auto_stop = True
                 reason_code = ReasonCode.EMERGENCY_STOP
@@ -259,6 +274,82 @@ class HostProcessor:
         if steering >= 0.2:
             return Action.RIGHT
         return Action.STRAIGHT
+
+    def _obstacle_avoidance(self, frame: SensorFrame) -> tuple[ManualCommandState | None, ReasonCode | None, str | None]:
+        """Rule-based override for obstacle avoidance in autonomous mode.
+
+        Returns a (command, reason_code, explanation) tuple when an obstacle
+        requires intervention, otherwise (None, None, None).
+        """
+        emergency_distance = self.runtime.fallback.config.emergency_distance_cm
+        safe_speed = 3.0  # slower when near obstacles
+
+        if frame.ultrasonic_distance < emergency_distance:
+            return (
+                ManualCommandState(
+                    speed_cm_s=0.0,
+                    steering=0.0,
+                    direction="forward",
+                    servo_angle=self.command.servo_angle,
+                    stop=True,
+                    sweep_requested=self.command.sweep_requested,
+                ).normalized(),
+                ReasonCode.EMERGENCY_STOP,
+                f"Ultrasonic distance {frame.ultrasonic_distance:.1f} cm below emergency threshold {emergency_distance:.1f} cm; stopping.",
+            )
+
+        if frame.ir_center:
+            # Front obstacle: steer toward the side with more free space.
+            if frame.left_gap_score >= frame.right_gap_score:
+                steering = -0.75  # turn left
+                reason = ReasonCode.FRONT_OBSTACLE_LEFT_GAP
+                explanation = "Front obstacle detected; steering left toward the larger gap."
+            else:
+                steering = 0.75  # turn right
+                reason = ReasonCode.FRONT_OBSTACLE_RIGHT_GAP
+                explanation = "Front obstacle detected; steering right toward the larger gap."
+            return (
+                ManualCommandState(
+                    speed_cm_s=safe_speed,
+                    steering=steering,
+                    direction="forward",
+                    servo_angle=self.command.servo_angle,
+                    stop=False,
+                    sweep_requested=self.command.sweep_requested,
+                ).normalized(),
+                reason,
+                explanation,
+            )
+
+        if frame.ir_left:
+            return (
+                ManualCommandState(
+                    speed_cm_s=safe_speed,
+                    steering=0.75,  # steer right away from left obstacle
+                    direction="forward",
+                    servo_angle=self.command.servo_angle,
+                    stop=False,
+                    sweep_requested=self.command.sweep_requested,
+                ).normalized(),
+                ReasonCode.LEFT_OBSTACLE,
+                "Left obstacle detected; steering right to avoid.",
+            )
+
+        if frame.ir_right:
+            return (
+                ManualCommandState(
+                    speed_cm_s=safe_speed,
+                    steering=-0.75,  # steer left away from right obstacle
+                    direction="forward",
+                    servo_angle=self.command.servo_angle,
+                    stop=False,
+                    sweep_requested=self.command.sweep_requested,
+                ).normalized(),
+                ReasonCode.RIGHT_OBSTACLE,
+                "Right obstacle detected; steering left to avoid.",
+            )
+
+        return None, None, None
 
     def _decision_dict(self, decision: Decision | None) -> dict | None:
         if decision is None:
