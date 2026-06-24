@@ -47,6 +47,12 @@ class HostProcessor:
         self.image_root = Path(image_root)
         self.command = ManualCommandState()
         self.mode = "manual"
+        self.auto_state = "drive"
+        self.auto_state_start = 0.0
+        self.turn_direction = 0
+        self.stop_scan_duration = 1.0
+        self.turn_duration = 0.6
+        self.recover_duration = 0.3
         self.latest_frame: SensorFrame | None = None
         self.latest_image_path: Path | None = None
         self.latest_image_data: bytes | None = None
@@ -79,14 +85,17 @@ class HostProcessor:
                 "error": self.model_load_error or "No manual model loaded; cannot enable autonomous mode.",
             }
         if requested in ("manual", "auto"):
-            self.mode = requested
-            print(f"[host] Switched to {self.mode} mode")
+            if self.mode != requested:
+                self.mode = requested
+                self._reset_auto_state()
+                print(f"[host] Switched to {self.mode} mode")
         return {"mode": self.mode, "model_loaded": self.manual_model is not None}
 
     def state(self) -> dict:
         return {
             "command": self.command.__dict__,
             "mode": self.mode,
+            "auto_state": self.auto_state,
             "model_loaded": self.manual_model is not None,
             "model_load_error": self.model_load_error,
             "latest_frame": self.latest_frame.__dict__ if self.latest_frame else None,
@@ -194,80 +203,7 @@ class HostProcessor:
         front_gap_metrics = front_gap_metrics or {}
 
         if self.mode == "auto" and self.manual_model is not None:
-            # Hybrid safety override: rule-based obstacle avoidance wins over the learned model
-            # because the collected dataset does not yet show consistent obstacle-avoidance steering.
-            obstacle_command, obstacle_reason, obstacle_explanation = self._obstacle_avoidance(
-                frame, has_scan_scores, front_gap_metrics
-            )
-            if obstacle_command is not None:
-                action = self._action_from_steering(obstacle_command.steering, obstacle_command.stop)
-                decision = Decision(
-                    action=action,
-                    reason_code=obstacle_reason,
-                    speed=obstacle_command.speed_cm_s,
-                    probabilities=probabilities,
-                    second_best_action=second_best_action,
-                    explanation=obstacle_explanation,
-                )
-                return obstacle_command, decision
-
-            try:
-                pred = self.manual_model.predict(frame)
-            except Exception as exc:
-                print(f"[host] Manual model prediction failed: {exc}")
-                command = ManualCommandState(
-                    speed_cm_s=0.0,
-                    steering=0.0,
-                    direction="forward",
-                    servo_angle=self.command.servo_angle,
-                    stop=True,
-                    sweep_requested=self.command.sweep_requested,
-                ).normalized()
-                decision = Decision(
-                    action=Action.STOP,
-                    reason_code=ReasonCode.EMERGENCY_STOP,
-                    speed=0.0,
-                    probabilities=probabilities,
-                    second_best_action=second_best_action,
-                    explanation=f"Autonomous model prediction failed; stopping as a safety fallback. Error: {exc}",
-                )
-                return command, decision
-
-            # Fallback safety override: expert emergency stop always wins
-            if suggestion.action == Action.STOP and suggestion.reason_code == ReasonCode.EMERGENCY_STOP:
-                auto_stop = True
-                reason_code = ReasonCode.EMERGENCY_STOP
-                explanation = (
-                    f"Autonomous model overridden by emergency stop. "
-                    f"Predicted steering={pred.steering:.2f}, speed={pred.speed_cm_s:.1f} cm/s."
-                )
-            else:
-                auto_stop = pred.stop
-                reason_code = suggestion.reason_code
-                explanation = (
-                    f"Autonomous model active. Steering={pred.steering:.2f}, "
-                    f"speed={pred.speed_cm_s:.1f} cm/s, direction={pred.direction}."
-                )
-
-            command = ManualCommandState(
-                speed_cm_s=0.0 if auto_stop else pred.speed_cm_s,
-                steering=pred.steering,
-                direction=pred.direction,
-                servo_angle=self.command.servo_angle,
-                stop=auto_stop,
-                sweep_requested=self.command.sweep_requested,
-            ).normalized()
-
-            action = self._action_from_steering(pred.steering, auto_stop)
-            decision = Decision(
-                action=action,
-                reason_code=reason_code,
-                speed=command.speed_cm_s,
-                probabilities=probabilities,
-                second_best_action=second_best_action,
-                explanation=explanation,
-            )
-            return command, decision
+            return self._auto_state_machine(frame, suggestion, has_scan_scores, front_gap_metrics)
 
         # Manual mode
         command = self.command
@@ -291,101 +227,213 @@ class HostProcessor:
             return Action.RIGHT
         return Action.STRAIGHT
 
-    def _obstacle_avoidance(
-        self,
-        frame: SensorFrame,
-        has_scan_scores: bool,
-        front_gap_metrics: dict,
-    ) -> tuple[ManualCommandState | None, ReasonCode | None, str | None]:
-        """Rule-based override for obstacle avoidance in autonomous mode.
+    def _reset_auto_state(self) -> None:
+        self.auto_state = "drive"
+        self.auto_state_start = 0.0
+        self.turn_direction = 0
 
-        Uses ultrasonic, center IR, and front-camera gap analysis to detect
-        frontal obstacles. When blocked, it either turns toward the freer side
-        (if gap-scan scores are available) or stops and requests a camera sweep
-        to measure side gaps.
-        """
+    def _is_front_blocked(self, frame: SensorFrame, front_gap_metrics: dict) -> bool:
         emergency_distance = self.runtime.fallback.config.emergency_distance_cm
-        safe_speed = 3.0  # slower when near obstacles
         front_free_space = float(front_gap_metrics.get("free_space_score", 1.0))
-        front_blocked = (
+        return (
             frame.ultrasonic_distance < emergency_distance
             or bool(frame.ir_center)
             or front_free_space < 0.35
         )
 
-        if not front_blocked:
-            # Side IR obstacles (IR only works at very close range).
-            if frame.ir_left:
-                return (
-                    ManualCommandState(
-                        speed_cm_s=safe_speed,
-                        steering=0.75,  # steer right away from left obstacle
-                        direction="forward",
-                        servo_angle=self.command.servo_angle,
-                        stop=False,
-                        sweep_requested=self.command.sweep_requested,
-                    ).normalized(),
-                    ReasonCode.LEFT_OBSTACLE,
-                    "Left obstacle detected; steering right to avoid.",
-                )
-            if frame.ir_right:
-                return (
-                    ManualCommandState(
-                        speed_cm_s=safe_speed,
-                        steering=-0.75,  # steer left away from right obstacle
-                        direction="forward",
-                        servo_angle=self.command.servo_angle,
-                        stop=False,
-                        sweep_requested=self.command.sweep_requested,
-                    ).normalized(),
-                    ReasonCode.RIGHT_OBSTACLE,
-                    "Right obstacle detected; steering left to avoid.",
-                )
-            return None, None, None
+    def _choose_turn_direction(self, frame: SensorFrame, has_scan_scores: bool) -> int:
+        """Return -1 for left turn, +1 for right turn."""
+        if has_scan_scores:
+            return -1 if frame.left_gap_score >= frame.right_gap_score else 1
+        return 1  # default to right if no gap data
 
-        # Front is blocked. If we do not have real side gap scores yet, stop and
-        # request a camera sweep so the Pi will send left/right scan images next cycle.
-        if not has_scan_scores:
-            return (
-                ManualCommandState(
-                    speed_cm_s=0.0,
-                    steering=0.0,
-                    direction="forward",
-                    servo_angle=self.command.servo_angle,
-                    stop=True,
-                    sweep_requested=True,
-                ).normalized(),
-                ReasonCode.NO_SAFE_PATH,
-                f"Front blocked (free_space={front_free_space:.2f}, ultrasonic={frame.ultrasonic_distance:.1f} cm, center_ir={frame.ir_center}); requesting camera sweep.",
-            )
+    def _auto_state_machine(
+        self,
+        frame: SensorFrame,
+        suggestion: Decision,
+        has_scan_scores: bool,
+        front_gap_metrics: dict,
+    ) -> tuple[ManualCommandState, Decision]:
+        """Stateful obstacle avoidance: drive -> stop/scan -> full-power turn -> recover."""
+        probabilities = suggestion.probabilities
+        second_best_action = suggestion.second_best_action
+        front_blocked = self._is_front_blocked(frame, front_gap_metrics)
+        now = time()
 
-        # We have scan scores: steer toward the side with more free space.
-        if frame.left_gap_score >= frame.right_gap_score:
-            steering = -0.75  # turn left
-            reason = ReasonCode.FRONT_OBSTACLE_LEFT_GAP
-            explanation = (
-                f"Front blocked (free_space={front_free_space:.2f}); "
-                f"steering left toward larger gap (L={frame.left_gap_score:.2f}, R={frame.right_gap_score:.2f})."
-            )
-        else:
-            steering = 0.75  # turn right
-            reason = ReasonCode.FRONT_OBSTACLE_RIGHT_GAP
-            explanation = (
-                f"Front blocked (free_space={front_free_space:.2f}); "
-                f"steering right toward larger gap (L={frame.left_gap_score:.2f}, R={frame.right_gap_score:.2f})."
-            )
-        return (
-            ManualCommandState(
-                speed_cm_s=safe_speed,
-                steering=steering,
+        # State transitions
+        if self.auto_state == "drive":
+            if front_blocked:
+                self.auto_state = "stop_scan"
+                self.auto_state_start = now
+                self.turn_direction = 0
+                print(f"[host] auto: drive -> stop_scan")
+
+        elif self.auto_state == "stop_scan":
+            if not front_blocked:
+                self.auto_state = "drive"
+                print(f"[host] auto: stop_scan -> drive (cleared)")
+            elif now - self.auto_state_start >= self.stop_scan_duration:
+                self.turn_direction = self._choose_turn_direction(frame, has_scan_scores)
+                self.auto_state = "turn"
+                self.auto_state_start = now
+                print(f"[host] auto: stop_scan -> turn ({'left' if self.turn_direction < 0 else 'right'})")
+
+        elif self.auto_state == "turn":
+            if now - self.auto_state_start >= self.turn_duration:
+                self.auto_state = "recover"
+                self.auto_state_start = now
+                print(f"[host] auto: turn -> recover")
+
+        elif self.auto_state == "recover":
+            if now - self.auto_state_start >= self.recover_duration:
+                self.auto_state = "drive"
+                print(f"[host] auto: recover -> drive")
+
+        # Generate command from current state
+        if self.auto_state == "drive":
+            return self._model_command(frame, suggestion)
+
+        if self.auto_state == "stop_scan":
+            return self._stop_and_scan_command(frame, front_gap_metrics, has_scan_scores)
+
+        if self.auto_state == "turn":
+            return self._turn_command(suggestion)
+
+        # recover
+        return self._recover_command(suggestion)
+
+    def _stop_and_scan_command(
+        self,
+        frame: SensorFrame,
+        front_gap_metrics: dict,
+        has_scan_scores: bool,
+    ) -> tuple[ManualCommandState, Decision]:
+        probabilities = self.latest_suggestion.get("probabilities", {}) if self.latest_suggestion else {}
+        suggestion = self.runtime.decide(frame)
+        front_free_space = float(front_gap_metrics.get("free_space_score", 1.0))
+        command = ManualCommandState(
+            speed_cm_s=0.0,
+            steering=0.0,
+            direction="forward",
+            servo_angle=self.command.servo_angle,
+            stop=True,
+            sweep_requested=not has_scan_scores,
+        ).normalized()
+        decision = Decision(
+            action=Action.STOP,
+            reason_code=ReasonCode.NO_SAFE_PATH,
+            speed=0.0,
+            probabilities=suggestion.probabilities,
+            second_best_action=suggestion.second_best_action,
+            explanation=(
+                f"Front blocked (free_space={front_free_space:.2f}, "
+                f"ultrasonic={frame.ultrasonic_distance:.1f} cm, center_ir={frame.ir_center}); "
+                f"stopping and scanning for {self.stop_scan_duration:.1f}s."
+            ),
+        )
+        return command, decision
+
+    def _turn_command(self, suggestion: Decision) -> tuple[ManualCommandState, Decision]:
+        # Full-power pivot turn using all four wheels.
+        steering = float(self.turn_direction) * 1.0
+        command = ManualCommandState(
+            speed_cm_s=5.0,
+            steering=steering,
+            direction="forward",
+            servo_angle=self.command.servo_angle,
+            stop=False,
+            sweep_requested=False,
+        ).normalized()
+        direction_label = "right" if self.turn_direction > 0 else "left"
+        action = Action.RIGHT if self.turn_direction > 0 else Action.LEFT
+        decision = Decision(
+            action=action,
+            reason_code=ReasonCode.FRONT_OBSTACLE_LEFT_GAP if self.turn_direction < 0 else ReasonCode.FRONT_OBSTACLE_RIGHT_GAP,
+            speed=5.0,
+            probabilities=suggestion.probabilities,
+            second_best_action=suggestion.second_best_action,
+            explanation=f"Full-power {direction_label} turn to avoid obstacle (steering={steering:+.2f}, speed=5.0 cm/s).",
+        )
+        return command, decision
+
+    def _recover_command(self, suggestion: Decision) -> tuple[ManualCommandState, Decision]:
+        command = ManualCommandState(
+            speed_cm_s=5.0,
+            steering=0.0,
+            direction="forward",
+            servo_angle=self.command.servo_angle,
+            stop=False,
+            sweep_requested=False,
+        ).normalized()
+        decision = Decision(
+            action=Action.STRAIGHT,
+            reason_code=ReasonCode.CLEAR_PATH,
+            speed=5.0,
+            probabilities=suggestion.probabilities,
+            second_best_action=suggestion.second_best_action,
+            explanation="Obstacle avoided; moving forward.",
+        )
+        return command, decision
+
+    def _model_command(self, frame: SensorFrame, suggestion: Decision) -> tuple[ManualCommandState, Decision]:
+        probabilities = suggestion.probabilities
+        second_best_action = suggestion.second_best_action
+        try:
+            pred = self.manual_model.predict(frame)
+        except Exception as exc:
+            print(f"[host] Manual model prediction failed: {exc}")
+            command = ManualCommandState(
+                speed_cm_s=0.0,
+                steering=0.0,
                 direction="forward",
                 servo_angle=self.command.servo_angle,
-                stop=False,
+                stop=True,
                 sweep_requested=False,
-            ).normalized(),
-            reason,
-            explanation,
+            ).normalized()
+            decision = Decision(
+                action=Action.STOP,
+                reason_code=ReasonCode.EMERGENCY_STOP,
+                speed=0.0,
+                probabilities=probabilities,
+                second_best_action=second_best_action,
+                explanation=f"Autonomous model prediction failed; stopping as a safety fallback. Error: {exc}",
+            )
+            return command, decision
+
+        if suggestion.action == Action.STOP and suggestion.reason_code == ReasonCode.EMERGENCY_STOP:
+            auto_stop = True
+            reason_code = ReasonCode.EMERGENCY_STOP
+            explanation = (
+                f"Autonomous model overridden by emergency stop. "
+                f"Predicted steering={pred.steering:.2f}, speed={pred.speed_cm_s:.1f} cm/s."
+            )
+        else:
+            auto_stop = pred.stop
+            reason_code = suggestion.reason_code
+            explanation = (
+                f"Autonomous model active. Steering={pred.steering:.2f}, "
+                f"speed={pred.speed_cm_s:.1f} cm/s, direction={pred.direction}."
+            )
+
+        command = ManualCommandState(
+            speed_cm_s=0.0 if auto_stop else pred.speed_cm_s,
+            steering=pred.steering,
+            direction=pred.direction,
+            servo_angle=self.command.servo_angle,
+            stop=auto_stop,
+            sweep_requested=False,
+        ).normalized()
+
+        action = self._action_from_steering(pred.steering, auto_stop)
+        decision = Decision(
+            action=action,
+            reason_code=reason_code,
+            speed=command.speed_cm_s,
+            probabilities=probabilities,
+            second_best_action=second_best_action,
+            explanation=explanation,
         )
+        return command, decision
 
     def _decision_dict(self, decision: Decision | None) -> dict | None:
         if decision is None:

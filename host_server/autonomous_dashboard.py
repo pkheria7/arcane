@@ -51,6 +51,7 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
         <h1>ARCANE Autonomous</h1>
         <span id="modeBadge" class="mode manual">Manual</span>
         <span id="modelBadge" class="mode" style="margin-left: 8px; background: #444;">Model: checking...</span>
+        <span id="stateBadge" class="mode" style="margin-left: 8px; background: #444; text-transform: none;">State: -</span>
       </div>
 
       <div id="errorBox" class="reason" style="color: #ff9999; display: none;"></div>
@@ -181,6 +182,18 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
       area.innerHTML = 'Accident report: <a class="report-link" href="/api/v1/accident-report?path=' + encodeURIComponent(path) + '" target="_blank">' + path + '</a>';
     }
 
+    function renderState(autoState) {
+      const badge = document.getElementById('stateBadge');
+      badge.textContent = 'State: ' + (autoState || '-');
+      const colors = {
+        drive: '#1f6b3a',
+        stop_scan: '#9b1c1c',
+        turn: '#2f6fed',
+        recover: '#b87a00',
+      };
+      badge.style.background = colors[autoState] || '#444';
+    }
+
     async function poll() {
       try {
         const res = await fetch('/api/v1/state');
@@ -188,6 +201,7 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
         mode = data.mode || 'manual';
         renderModelStatus(data.model_loaded, data.model_load_error);
         renderMode();
+        renderState(data.auto_state);
         renderSensors(data.latest_frame || {}, data.latest_suggestion || {}, data.latest_front_gap_metrics || {}, data.latest_gap_metrics || {});
         renderDecision(data.latest_command_decision, data.command);
         renderReport(data.latest_accident_report_path);
