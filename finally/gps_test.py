@@ -31,25 +31,51 @@ def decode_gga(line: str) -> str | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Print raw GPS NMEA data from the Pi UART.")
     parser.add_argument("--port", default="/dev/serial0")
+    parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="Try common Raspberry Pi serial device names and report which ones produce bytes.",
+    )
     parser.add_argument("--baudrate", type=int, default=9600)
     parser.add_argument("--seconds", type=float, default=30.0)
     args = parser.parse_args()
 
     import serial
 
-    print(f"Reading GPS from {args.port} at {args.baudrate} baud for {args.seconds:.0f}s.")
+    if args.scan:
+        ports = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyAMA10", "/dev/ttyS0", "/dev/ttyUSB0"]
+        for port in ports:
+            print(f"\n--- {port} ---")
+            try:
+                read_port(serial, port, args.baudrate, min(args.seconds, 8.0))
+            except Exception as exc:
+                print(f"Cannot read {port}: {exc}")
+        return
+
+    try:
+        read_port(serial, args.port, args.baudrate, args.seconds)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+
+
+def read_port(serial, port: str, baudrate: int, seconds: float) -> None:
+    print(f"Reading GPS from {port} at {baudrate} baud for {seconds:.0f}s.")
     print("You should see raw $GP.../$GN... lines. GGA fix=0 means no satellite fix yet.")
-    deadline = monotonic() + args.seconds
-    with serial.Serial(args.port, baudrate=args.baudrate, timeout=1.0) as ser:
+    deadline = monotonic() + seconds
+    saw_data = False
+    with serial.Serial(port, baudrate=baudrate, timeout=1.0) as ser:
         while monotonic() < deadline:
             line = ser.readline().decode("ascii", errors="ignore").strip()
             if not line:
                 print("(no data)")
                 continue
+            saw_data = True
             decoded = decode_gga(line)
             print(line)
             if decoded:
                 print("  " + decoded)
+    if not saw_data:
+        print("No bytes received on this port.")
 
 
 if __name__ == "__main__":
