@@ -23,6 +23,7 @@ def scan_gaps(hardware, config: AppConfig, sensors: SensorSnapshot) -> tuple[Sen
     latest_jpeg: bytes | None = None
     for angle in config.autonomy.scan_angles:
         hardware.set_servo(angle)
+        sleep(config.autonomy.scan_servo_settle_s)
         latest_jpeg = hardware.capture_camera()
         gap = score_jpeg(latest_jpeg)
         scores[angle] = gap.center
@@ -123,6 +124,7 @@ def run(config: AppConfig, simulate: bool = False, no_ui: bool = False) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    defaults = AutonomyConfig()
     parser = argparse.ArgumentParser(description="Pi-only ARCANE rule-based vehicle.")
     parser.add_argument("--simulate", action="store_true")
     parser.add_argument("--no-ui", action="store_true")
@@ -133,11 +135,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-width", type=int, default=160)
     parser.add_argument("--camera-height", type=int, default=120)
     parser.add_argument("--pin-factory", default="auto")
-    parser.add_argument("--cruise-pwm", type=float, default=0.58)
-    parser.add_argument("--avoid-pwm", type=float, default=0.56)
-    parser.add_argument("--reverse-pwm", type=float, default=0.52)
-    parser.add_argument("--pivot-pwm", type=float, default=0.68)
-    parser.add_argument("--recover-pwm", type=float, default=0.54)
+    parser.add_argument("--cruise-pwm", type=float, default=defaults.cruise_pwm)
+    parser.add_argument("--avoid-pwm", type=float, default=defaults.avoid_pwm)
+    parser.add_argument("--reverse-pwm", type=float, default=defaults.reverse_pwm)
+    parser.add_argument("--pivot-pwm", type=float, default=defaults.pivot_pwm)
+    parser.add_argument("--recover-pwm", type=float, default=defaults.recover_pwm)
+    parser.add_argument("--pivot-seconds", type=float, default=defaults.pivot_s)
+    parser.add_argument("--reverse-seconds", type=float, default=defaults.reverse_s)
+    parser.add_argument("--scan-settle", type=float, default=defaults.scan_servo_settle_s)
     return parser.parse_args()
 
 
@@ -159,6 +164,9 @@ def main() -> None:
             reverse_pwm=args.reverse_pwm,
             pivot_pwm=args.pivot_pwm,
             recover_pwm=args.recover_pwm,
+            reverse_s=args.reverse_seconds,
+            pivot_s=args.pivot_seconds,
+            scan_servo_settle_s=args.scan_settle,
         ),
     )
     run(config, simulate=args.simulate, no_ui=args.no_ui)

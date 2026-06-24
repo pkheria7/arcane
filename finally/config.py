@@ -47,15 +47,15 @@ class RuntimeConfig:
 
 @dataclass(frozen=True)
 class AutonomyConfig:
-    cruise_pwm: float = 0.58
-    avoid_pwm: float = 0.56
-    reverse_pwm: float = 0.52
-    pivot_pwm: float = 0.68
-    recover_pwm: float = 0.54
+    cruise_pwm: float = 0.90
+    avoid_pwm: float = 0.90
+    reverse_pwm: float = 0.90
+    pivot_pwm: float = 0.90
+    recover_pwm: float = 0.90
     steering_deadzone: float = 0.08
-    full_turn_threshold: float = 0.72
-    slight_turn_min_inner_ratio: float = 0.28
-    pivot_inner_reverse_ratio: float = 0.55
+    full_turn_threshold: float = 0.80
+    slight_turn_min_inner_ratio: float = 0.20
+    pivot_inner_reverse_ratio: float = 0.60
     close_distance_cm: float = 35.0
     emergency_distance_cm: float = 14.0
     clear_distance_cm: float = 45.0
@@ -68,7 +68,8 @@ class AutonomyConfig:
     recover_s: float = 0.45
     hard_stop_s: float = 0.45
     safe_gap_score: float = 0.42
-    scan_angles: tuple[int, int, int] = (150, 90, 30)
+    scan_angles: tuple[int, int, int] = (180, 90, 0)
+    scan_servo_settle_s: float = 0.45
 
 
 @dataclass(frozen=True)
