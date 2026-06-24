@@ -32,6 +32,14 @@ http://<raspberry-pi-ip>:8080
 
 The UI uses Leaflet with OpenStreetMap tiles. When the GPS module has a fix, it shows the current coordinates, a live marker, and a short trail of recent movement.
 
+If the UI says `no fix`, test the GPS module directly:
+
+```bash
+python -m finally.gps_test --port /dev/serial0 --seconds 30
+```
+
+You should see raw NMEA lines. A decoded `GGA fix=0` means the module is talking but has not locked satellites yet. Move the GPS antenna outdoors or near a window and wait a few minutes. If you see `(no data)`, check UART wiring, serial hardware enablement, and that serial login shell is disabled in `sudo raspi-config`.
+
 Find the Pi IP with:
 
 ```bash

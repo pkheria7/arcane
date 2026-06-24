@@ -21,6 +21,7 @@ class SensorSnapshot:
     gps_lat: float | None = None
     gps_lon: float | None = None
     gps_fix_quality: int = 0
+    gps_last_fix_age_s: float | None = None
     error: str | None = None
 
     @classmethod

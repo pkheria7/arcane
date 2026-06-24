@@ -87,9 +87,15 @@ class PiHardware:
         except Exception:
             self.imu = NullImuReader()
         try:
-            self.gps = SerialGpsReader()
+            # Keep GPS reads short so the autonomy loop is never slowed by UART waits.
+            self.gps = SerialGpsReader(timeout=0.005)
         except Exception:
             self.gps = NullGpsReader()
+        self.last_gps_lat: float | None = None
+        self.last_gps_lon: float | None = None
+        self.last_gps_fix_quality = 0
+        self.last_gps_fix_time: float | None = None
+        self.next_gps_poll = 0.0
 
         self.servo = AngularServo(pins.servo, min_angle=0, max_angle=180, min_pulse_width=0.0005, max_pulse_width=0.0025)
         self.servo_angle = 90
@@ -119,7 +125,17 @@ class PiHardware:
     def read_sensors(self) -> SensorSnapshot:
         reading = self.ultrasonic.measure()
         imu = self.imu.read()
-        gps = self.gps.read()
+        now = time()
+        if now >= self.next_gps_poll:
+            gps = self.gps.read()
+            self.next_gps_poll = now + 0.5
+            if gps.fix_quality > 0 and gps.lat is not None and gps.lon is not None:
+                self.last_gps_lat = gps.lat
+                self.last_gps_lon = gps.lon
+                self.last_gps_fix_quality = gps.fix_quality
+                self.last_gps_fix_time = now
+            elif self.last_gps_fix_time is None:
+                self.last_gps_fix_quality = gps.fix_quality
         gaps = score_jpeg(self.latest_jpeg)
         return SensorSnapshot(
             timestamp=time(),
@@ -134,9 +150,10 @@ class PiHardware:
             right_gap=gaps.right,
             acceleration_g=imu.acceleration,
             gyro_z_dps=imu.gyro_z,
-            gps_lat=gps.lat,
-            gps_lon=gps.lon,
-            gps_fix_quality=gps.fix_quality,
+            gps_lat=self.last_gps_lat,
+            gps_lon=self.last_gps_lon,
+            gps_fix_quality=self.last_gps_fix_quality,
+            gps_last_fix_age_s=None if self.last_gps_fix_time is None else max(0.0, now - self.last_gps_fix_time),
             error=reading.error,
         )
 

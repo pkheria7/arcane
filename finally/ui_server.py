@@ -49,7 +49,7 @@ HTML = """<!doctype html>
         <span id="hz" class="badge muted">0.0 Hz</span>
       </div>
       <p id="reason">Waiting for telemetry...</p>
-      <div id="map"></div>
+      <div id="map"><div id="mapStatus">Waiting for GPS fix...</div></div>
       <div class="grid" id="sensors"></div>
       <div class="grid" id="motors"></div>
       <h2>Evidence Records</h2>
@@ -75,7 +75,8 @@ main { min-height: 100vh; display: grid; grid-template-columns: minmax(300px, 1.
 .camera { background: #000; border: 1px solid #333; border-radius: 8px; display: grid; place-items: center; overflow: hidden; min-height: 320px; }
 .camera img { width: 100%; height: 100%; object-fit: contain; }
 .panel { border: 1px solid #333; border-radius: 8px; background: #181818; padding: 16px; }
-#map { height: 240px; border: 1px solid #333; border-radius: 8px; overflow: hidden; margin: 12px 0; background: #050505; }
+#map { height: 240px; border: 1px solid #333; border-radius: 8px; overflow: hidden; margin: 12px 0; background: #050505; position: relative; }
+#mapStatus { position: absolute; z-index: 500; left: 12px; top: 12px; background: rgba(0,0,0,.72); color: #fff; border: 1px solid #444; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
 h1 { margin: 0 0 10px; font-size: 22px; }
 .badges { display: flex; gap: 8px; flex-wrap: wrap; }
 .badge { background: #1f6b3a; border-radius: 6px; padding: 6px 10px; font-weight: 700; }
@@ -105,28 +106,38 @@ let trailPoints = [];
 function tile(label, value, active=false) {
   return `<div class="tile ${active ? 'active' : ''}"><b>${label}</b>${value}</div>`;
 }
-function initMap(lat, lon) {
+function initMap(lat=20.5937, lon=78.9629, zoom=5) {
   if (map || !window.L) return;
-  map = L.map('map').setView([lat, lon], 18);
+  map = L.map('map').setView([lat, lon], zoom);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
-  marker = L.marker([lat, lon]).addTo(map);
+  marker = L.marker([lat, lon]);
   trail = L.polyline([], { color: '#6fa0ff', weight: 4 }).addTo(map);
 }
 function updateMap(s) {
+  initMap();
   const lat = Number(s.gps_lat);
   const lon = Number(s.gps_lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-  initMap(lat, lon);
-  if (!map) return;
+  const status = document.getElementById('mapStatus');
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !s.gps_fix_quality) {
+    if (status) status.textContent = 'Waiting for GPS fix... move outdoors / check GPS wiring';
+    return;
+  }
+  if (!map || !marker || !trail) return;
   const point = [lat, lon];
+  if (!map.hasLayer(marker)) marker.addTo(map);
   marker.setLatLng(point);
   trailPoints.push(point);
   if (trailPoints.length > 300) trailPoints.shift();
   trail.setLatLngs(trailPoints);
+  if (status) {
+    const age = Number(s.gps_last_fix_age_s);
+    status.textContent = `GPS fix ${s.gps_fix_quality} | ${lat.toFixed(6)}, ${lon.toFixed(6)}${Number.isFinite(age) ? ' | age ' + age.toFixed(1) + 's' : ''}`;
+  }
   map.panTo(point, { animate: false });
+  if (map.getZoom() < 17) map.setZoom(18);
 }
 async function post(path, body) {
   await fetch(path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
