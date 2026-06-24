@@ -50,9 +50,11 @@ class HostProcessor:
         self.auto_state = "drive"
         self.auto_state_start = 0.0
         self.turn_direction = 0
-        self.stop_scan_duration = 1.0
+        self.stop_scan_duration = 0.0  # no delay; turn immediately on obstacle
         self.turn_duration = 0.6
         self.recover_duration = 0.3
+        self.last_left_gap_score = 0.5
+        self.last_right_gap_score = 0.5
         self.latest_frame: SensorFrame | None = None
         self.latest_image_path: Path | None = None
         self.latest_image_data: bytes | None = None
@@ -126,10 +128,12 @@ class HostProcessor:
             frame_data["left_gap_score"] = scan_scores.get(135, (0.0, 0.0, 0.0))[0]
             frame_data["center_gap_score"] = scan_scores.get(90, (0.0, 0.5, 0.0))[1]
             frame_data["right_gap_score"] = scan_scores.get(45, (0.0, 0.0, 0.0))[2]
+            self.last_left_gap_score = float(frame_data["left_gap_score"])
+            self.last_right_gap_score = float(frame_data["right_gap_score"])
         else:
-            frame_data["left_gap_score"] = 0.5
+            frame_data["left_gap_score"] = self.last_left_gap_score
             frame_data["center_gap_score"] = 0.5
-            frame_data["right_gap_score"] = 0.5
+            frame_data["right_gap_score"] = self.last_right_gap_score
 
         frame = SensorFrame(**frame_data)
         suggestion = self.runtime.decide(frame)
@@ -297,7 +301,7 @@ class HostProcessor:
             return self._stop_and_scan_command(frame, front_gap_metrics, has_scan_scores)
 
         if self.auto_state == "turn":
-            return self._turn_command(suggestion)
+            return self._turn_command(suggestion, has_scan_scores)
 
         # recover
         return self._recover_command(suggestion)
@@ -333,7 +337,7 @@ class HostProcessor:
         )
         return command, decision
 
-    def _turn_command(self, suggestion: Decision) -> tuple[ManualCommandState, Decision]:
+    def _turn_command(self, suggestion: Decision, has_scan_scores: bool = False) -> tuple[ManualCommandState, Decision]:
         # Full-power pivot turn using all four wheels.
         steering = float(self.turn_direction) * 1.0
         command = ManualCommandState(
@@ -342,7 +346,8 @@ class HostProcessor:
             direction="forward",
             servo_angle=self.command.servo_angle,
             stop=False,
-            sweep_requested=False,
+            # Keep requesting sweeps until we have fresh gap scores for next time.
+            sweep_requested=not has_scan_scores,
         ).normalized()
         direction_label = "right" if self.turn_direction > 0 else "left"
         action = Action.RIGHT if self.turn_direction > 0 else Action.LEFT

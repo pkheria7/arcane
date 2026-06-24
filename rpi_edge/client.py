@@ -120,8 +120,10 @@ def build_packet(
     send_camera: bool,
     jpeg_quality: int,
     force_gap_scan: bool = False,
+    frame=None,
 ) -> EdgePacket:
-    frame = sensors.read_frame(servo_angle=getattr(servo, "angle", 0), image_path=None)
+    if frame is None:
+        frame = sensors.read_frame(servo_angle=getattr(servo, "angle", 0), image_path=None)
     set_servo_for_obstacles(servo, frame)
     image = capture_payload(sensors, servo, image_dir, "edge_cycle", jpeg_quality) if send_camera else None
     frame = frame.__class__(**{**frame.__dict__, "servo_angle": getattr(servo, "angle", 0)})
@@ -200,10 +202,29 @@ def run(
     command: dict = {"stop": True, "action": "stop"}
     try:
         while True:
+            # Read sensors first so we can apply a local emergency reflex before
+            # waiting for the host response.
+            frame = sensors.read_frame(servo_angle=getattr(servo, "angle", 0), image_path=None)
+            local_emergency = bool(frame.ir_center) or frame.ultrasonic_distance < EMERGENCY_SCAN_DISTANCE_CM
+            if local_emergency:
+                motor.stop()
+                print(
+                    f"[edge] LOCAL EMERGENCY STOP ir_center={frame.ir_center} "
+                    f"ultrasonic={frame.ultrasonic_distance:.1f}cm",
+                    flush=True,
+                )
+
             # Include a gap scan if the previous host command requested one.
             force_gap_scan = bool(command.get("sweep_requested", False))
             packet = build_packet(
-                vehicle_id, sensors, servo, image_dir, send_camera, jpeg_quality, force_gap_scan=force_gap_scan
+                vehicle_id,
+                sensors,
+                servo,
+                image_dir,
+                send_camera,
+                jpeg_quality,
+                force_gap_scan=force_gap_scan,
+                frame=frame,
             )
             command = safe_post_packet(host_url, packet, timeout)
             if command is None:
@@ -211,6 +232,10 @@ def run(
                 sleep(max(cycle_delay, 1.0))
                 command = {"stop": True, "action": "stop"}
                 continue
+            # If local emergency was active this cycle, force the next command to
+            # stop as well until the host explicitly tells us to move.
+            if local_emergency:
+                command = {**command, "stop": True}
             left_speed, right_speed = apply_command(motor, servo, command)
             print(
                 "[edge] command="
@@ -234,13 +259,13 @@ def main() -> None:
     parser.add_argument("--host-url", required=True, help="Mac host URL, for example http://192.168.1.25:8765")
     parser.add_argument("--vehicle-id", default="rpi-car-01")
     parser.add_argument("--simulate", action="store_true")
-    parser.add_argument("--cycle-delay", type=float, default=0.15)
+    parser.add_argument("--cycle-delay", type=float, default=0.05)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--pin-factory", default="auto", choices=["auto", "lgpio", "pigpio", "rpigpio", "native"])
     parser.add_argument("--no-camera", action="store_true", help="Send sensor telemetry without camera frames for motor/control testing.")
-    parser.add_argument("--camera-width", type=int, default=320)
-    parser.add_argument("--camera-height", type=int, default=240)
-    parser.add_argument("--jpeg-quality", type=int, default=45)
+    parser.add_argument("--camera-width", type=int, default=160)
+    parser.add_argument("--camera-height", type=int, default=120)
+    parser.add_argument("--jpeg-quality", type=int, default=30)
     args = parser.parse_args()
     run(
         args.host_url,
