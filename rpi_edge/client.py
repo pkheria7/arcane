@@ -188,7 +188,7 @@ def run(
             command = safe_post_packet(host_url, packet, timeout)
             if command is None:
                 motor.stop()
-                sleep(max(cycle_delay, 0.5))
+                sleep(max(cycle_delay, 1.0))
                 continue
             left_speed, right_speed = apply_command(motor, servo, command)
             print(
