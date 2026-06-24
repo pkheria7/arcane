@@ -17,7 +17,7 @@ def pulse(driver: FourMotorDriver, command: MotorCommand, seconds: float) -> Non
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test four ARCANE motors with wheels lifted.")
-    parser.add_argument("--pwm", type=float, default=0.35)
+    parser.add_argument("--pwm", type=float, default=0.55)
     parser.add_argument("--seconds", type=float, default=1.0)
     args = parser.parse_args()
 
@@ -40,4 +40,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

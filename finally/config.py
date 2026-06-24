@@ -14,7 +14,7 @@ class WheelPins:
 class WheelCalibration:
     invert: bool = False
     trim: float = 1.0
-    min_pwm: float = 0.18
+    min_pwm: float = 0.28
 
 
 @dataclass(frozen=True)
@@ -47,11 +47,11 @@ class RuntimeConfig:
 
 @dataclass(frozen=True)
 class AutonomyConfig:
-    cruise_pwm: float = 0.38
-    avoid_pwm: float = 0.36
-    reverse_pwm: float = 0.34
-    pivot_pwm: float = 0.42
-    recover_pwm: float = 0.34
+    cruise_pwm: float = 0.58
+    avoid_pwm: float = 0.56
+    reverse_pwm: float = 0.52
+    pivot_pwm: float = 0.68
+    recover_pwm: float = 0.54
     steering_deadzone: float = 0.08
     full_turn_threshold: float = 0.72
     slight_turn_min_inner_ratio: float = 0.28
@@ -84,4 +84,3 @@ class AppConfig:
             "rear_right": WheelCalibration(),
         }
     )
-

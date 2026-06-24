@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from time import sleep, time
 
-from .config import AppConfig, RuntimeConfig
+from .config import AppConfig, AutonomyConfig, RuntimeConfig
 from .controller import RuleController
 from .hardware import PiHardware, SimulatedHardware
 from .models import SensorSnapshot, Telemetry
@@ -133,6 +133,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-width", type=int, default=160)
     parser.add_argument("--camera-height", type=int, default=120)
     parser.add_argument("--pin-factory", default="auto")
+    parser.add_argument("--cruise-pwm", type=float, default=0.58)
+    parser.add_argument("--avoid-pwm", type=float, default=0.56)
+    parser.add_argument("--reverse-pwm", type=float, default=0.52)
+    parser.add_argument("--pivot-pwm", type=float, default=0.68)
+    parser.add_argument("--recover-pwm", type=float, default=0.54)
     return parser.parse_args()
 
 
@@ -147,7 +152,14 @@ def main() -> None:
             camera_width=args.camera_width,
             camera_height=args.camera_height,
             pin_factory=args.pin_factory,
-        )
+        ),
+        autonomy=AutonomyConfig(
+            cruise_pwm=args.cruise_pwm,
+            avoid_pwm=args.avoid_pwm,
+            reverse_pwm=args.reverse_pwm,
+            pivot_pwm=args.pivot_pwm,
+            recover_pwm=args.recover_pwm,
+        ),
     )
     run(config, simulate=args.simulate, no_ui=args.no_ui)
 
