@@ -21,6 +21,7 @@ SERVO_RIGHT = 0
 SCAN_ANGLES = (30, 90, 150)
 MAX_SPEED_CM_S = 5.0
 GAP_SCAN_DISTANCE_CM = 100.0
+EMERGENCY_SCAN_DISTANCE_CM = 40.0
 STEERING_DEADZONE = 0.08
 FULL_TURN_THRESHOLD = 0.72
 SLIGHT_TURN_MIN_INNER_RATIO = 0.22
@@ -111,13 +112,27 @@ def capture_gap_scan(sensors, servo, image_dir: Path, jpeg_quality: int, prefix:
     return scan_images
 
 
-def build_packet(vehicle_id: str, sensors, servo, image_dir: Path, send_camera: bool, jpeg_quality: int) -> EdgePacket:
+def build_packet(
+    vehicle_id: str,
+    sensors,
+    servo,
+    image_dir: Path,
+    send_camera: bool,
+    jpeg_quality: int,
+    force_gap_scan: bool = False,
+) -> EdgePacket:
     frame = sensors.read_frame(servo_angle=getattr(servo, "angle", 0), image_path=None)
     set_servo_for_obstacles(servo, frame)
     image = capture_payload(sensors, servo, image_dir, "edge_cycle", jpeg_quality) if send_camera else None
     frame = frame.__class__(**{**frame.__dict__, "servo_angle": getattr(servo, "angle", 0)})
     scan_images = []
-    if send_camera and frame.ultrasonic_distance < GAP_SCAN_DISTANCE_CM:
+    needs_gap_scan = (
+        force_gap_scan
+        or frame.ir_center
+        or frame.ultrasonic_distance < EMERGENCY_SCAN_DISTANCE_CM
+        or frame.ultrasonic_distance < GAP_SCAN_DISTANCE_CM
+    )
+    if send_camera and needs_gap_scan:
         scan_images = capture_gap_scan(sensors, servo, image_dir, jpeg_quality, "edge_gap_scan")
         servo.set_angle(SERVO_FRONT)
     return EdgePacket.from_frame(vehicle_id=vehicle_id, frame=frame, image=image, scan_images=scan_images)
@@ -182,13 +197,19 @@ def run(
 
     image_dir = Path("/tmp/arcane_edge_images")
     print(f"[edge] Posting telemetry to {host_url.rstrip('/')}/api/v1/cycle", flush=True)
+    command: dict = {"stop": True, "action": "stop"}
     try:
         while True:
-            packet = build_packet(vehicle_id, sensors, servo, image_dir, send_camera, jpeg_quality)
+            # Include a gap scan if the previous host command requested one.
+            force_gap_scan = bool(command.get("sweep_requested", False))
+            packet = build_packet(
+                vehicle_id, sensors, servo, image_dir, send_camera, jpeg_quality, force_gap_scan=force_gap_scan
+            )
             command = safe_post_packet(host_url, packet, timeout)
             if command is None:
                 motor.stop()
                 sleep(max(cycle_delay, 1.0))
+                command = {"stop": True, "action": "stop"}
                 continue
             left_speed, right_speed = apply_command(motor, servo, command)
             print(

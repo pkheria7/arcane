@@ -11,7 +11,7 @@ from .actions import Action, ReasonCode
 class NavigationConfig:
     constant_speed: float = 0.42
     turn_speed: float = 0.36
-    emergency_distance_cm: float = 18.0
+    emergency_distance_cm: float = 40.0
     safe_gap_threshold: float = 0.35
     center_scan_angles: tuple[int, ...] = (-60, -30, 0, 30, 60)
 

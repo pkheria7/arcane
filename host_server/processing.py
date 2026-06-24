@@ -53,6 +53,7 @@ class HostProcessor:
         self.latest_image_content_type = "image/jpeg"
         self.latest_image_updated_at = 0.0
         self.latest_gap_metrics: dict[int, dict] = {}
+        self.latest_front_gap_metrics: dict = {}
         self.latest_suggestion: dict | None = None
         self.latest_command_decision: Decision | None = None
         self.latest_accident_report_path: str | None = None
@@ -92,6 +93,7 @@ class HostProcessor:
             "latest_image_url": "/api/v1/latest-image?vehicle=latest" if self.latest_image_data else None,
             "latest_image_updated_at": self.latest_image_updated_at,
             "latest_gap_metrics": self.latest_gap_metrics,
+            "latest_front_gap_metrics": self.latest_front_gap_metrics,
             "latest_suggestion": self.latest_suggestion,
             "latest_command_decision": self._decision_dict(self.latest_command_decision) if self.latest_command_decision else None,
             "latest_accident_report_path": self.latest_accident_report_path,
@@ -106,7 +108,11 @@ class HostProcessor:
         if image_path:
             frame_data["image_path"] = str(image_path)
 
+        front_gap_metrics = self._front_gap_metrics(image_path)
+        self.latest_front_gap_metrics = front_gap_metrics
+
         scan_scores, scan_metrics = self._scan_scores(packet.get("scan_images") or [], upload_dir)
+        has_scan_scores = bool(scan_scores)
         if scan_scores:
             frame_data["left_gap_score"] = scan_scores.get(135, (0.0, 0.0, 0.0))[0]
             frame_data["center_gap_score"] = scan_scores.get(90, (0.0, 0.5, 0.0))[1]
@@ -128,9 +134,10 @@ class HostProcessor:
             "probabilities": suggestion.probabilities,
             "best_gap_angle": best_gap_angle,
             "best_gap_score": best_gap_score,
+            "front_free_space_score": front_gap_metrics.get("free_space_score", 0.5),
         }
 
-        command_for_response, decision = self._resolve_command(frame, suggestion)
+        command_for_response, decision = self._resolve_command(frame, suggestion, has_scan_scores, front_gap_metrics)
         self.latest_command_decision = decision
         self.recorder.append(vehicle_id, frame, command_for_response, scan_metrics, best_gap_angle, best_gap_score)
 
@@ -175,14 +182,23 @@ class HostProcessor:
             mode=self.mode,
         )
 
-    def _resolve_command(self, frame: SensorFrame, suggestion: Decision) -> tuple[ManualCommandState, Decision]:
+    def _resolve_command(
+        self,
+        frame: SensorFrame,
+        suggestion: Decision,
+        has_scan_scores: bool = False,
+        front_gap_metrics: dict | None = None,
+    ) -> tuple[ManualCommandState, Decision]:
         probabilities = suggestion.probabilities
         second_best_action = suggestion.second_best_action
+        front_gap_metrics = front_gap_metrics or {}
 
         if self.mode == "auto" and self.manual_model is not None:
             # Hybrid safety override: rule-based obstacle avoidance wins over the learned model
             # because the collected dataset does not yet show consistent obstacle-avoidance steering.
-            obstacle_command, obstacle_reason, obstacle_explanation = self._obstacle_avoidance(frame)
+            obstacle_command, obstacle_reason, obstacle_explanation = self._obstacle_avoidance(
+                frame, has_scan_scores, front_gap_metrics
+            )
             if obstacle_command is not None:
                 action = self._action_from_steering(obstacle_command.steering, obstacle_command.stop)
                 decision = Decision(
@@ -275,16 +291,61 @@ class HostProcessor:
             return Action.RIGHT
         return Action.STRAIGHT
 
-    def _obstacle_avoidance(self, frame: SensorFrame) -> tuple[ManualCommandState | None, ReasonCode | None, str | None]:
+    def _obstacle_avoidance(
+        self,
+        frame: SensorFrame,
+        has_scan_scores: bool,
+        front_gap_metrics: dict,
+    ) -> tuple[ManualCommandState | None, ReasonCode | None, str | None]:
         """Rule-based override for obstacle avoidance in autonomous mode.
 
-        Returns a (command, reason_code, explanation) tuple when an obstacle
-        requires intervention, otherwise (None, None, None).
+        Uses ultrasonic, center IR, and front-camera gap analysis to detect
+        frontal obstacles. When blocked, it either turns toward the freer side
+        (if gap-scan scores are available) or stops and requests a camera sweep
+        to measure side gaps.
         """
         emergency_distance = self.runtime.fallback.config.emergency_distance_cm
         safe_speed = 3.0  # slower when near obstacles
+        front_free_space = float(front_gap_metrics.get("free_space_score", 1.0))
+        front_blocked = (
+            frame.ultrasonic_distance < emergency_distance
+            or bool(frame.ir_center)
+            or front_free_space < 0.35
+        )
 
-        if frame.ultrasonic_distance < emergency_distance:
+        if not front_blocked:
+            # Side IR obstacles (IR only works at very close range).
+            if frame.ir_left:
+                return (
+                    ManualCommandState(
+                        speed_cm_s=safe_speed,
+                        steering=0.75,  # steer right away from left obstacle
+                        direction="forward",
+                        servo_angle=self.command.servo_angle,
+                        stop=False,
+                        sweep_requested=self.command.sweep_requested,
+                    ).normalized(),
+                    ReasonCode.LEFT_OBSTACLE,
+                    "Left obstacle detected; steering right to avoid.",
+                )
+            if frame.ir_right:
+                return (
+                    ManualCommandState(
+                        speed_cm_s=safe_speed,
+                        steering=-0.75,  # steer left away from right obstacle
+                        direction="forward",
+                        servo_angle=self.command.servo_angle,
+                        stop=False,
+                        sweep_requested=self.command.sweep_requested,
+                    ).normalized(),
+                    ReasonCode.RIGHT_OBSTACLE,
+                    "Right obstacle detected; steering left to avoid.",
+                )
+            return None, None, None
+
+        # Front is blocked. If we do not have real side gap scores yet, stop and
+        # request a camera sweep so the Pi will send left/right scan images next cycle.
+        if not has_scan_scores:
             return (
                 ManualCommandState(
                     speed_cm_s=0.0,
@@ -292,64 +353,39 @@ class HostProcessor:
                     direction="forward",
                     servo_angle=self.command.servo_angle,
                     stop=True,
-                    sweep_requested=self.command.sweep_requested,
+                    sweep_requested=True,
                 ).normalized(),
-                ReasonCode.EMERGENCY_STOP,
-                f"Ultrasonic distance {frame.ultrasonic_distance:.1f} cm below emergency threshold {emergency_distance:.1f} cm; stopping.",
+                ReasonCode.NO_SAFE_PATH,
+                f"Front blocked (free_space={front_free_space:.2f}, ultrasonic={frame.ultrasonic_distance:.1f} cm, center_ir={frame.ir_center}); requesting camera sweep.",
             )
 
-        if frame.ir_center:
-            # Front obstacle: steer toward the side with more free space.
-            if frame.left_gap_score >= frame.right_gap_score:
-                steering = -0.75  # turn left
-                reason = ReasonCode.FRONT_OBSTACLE_LEFT_GAP
-                explanation = "Front obstacle detected; steering left toward the larger gap."
-            else:
-                steering = 0.75  # turn right
-                reason = ReasonCode.FRONT_OBSTACLE_RIGHT_GAP
-                explanation = "Front obstacle detected; steering right toward the larger gap."
-            return (
-                ManualCommandState(
-                    speed_cm_s=safe_speed,
-                    steering=steering,
-                    direction="forward",
-                    servo_angle=self.command.servo_angle,
-                    stop=False,
-                    sweep_requested=self.command.sweep_requested,
-                ).normalized(),
-                reason,
-                explanation,
+        # We have scan scores: steer toward the side with more free space.
+        if frame.left_gap_score >= frame.right_gap_score:
+            steering = -0.75  # turn left
+            reason = ReasonCode.FRONT_OBSTACLE_LEFT_GAP
+            explanation = (
+                f"Front blocked (free_space={front_free_space:.2f}); "
+                f"steering left toward larger gap (L={frame.left_gap_score:.2f}, R={frame.right_gap_score:.2f})."
             )
-
-        if frame.ir_left:
-            return (
-                ManualCommandState(
-                    speed_cm_s=safe_speed,
-                    steering=0.75,  # steer right away from left obstacle
-                    direction="forward",
-                    servo_angle=self.command.servo_angle,
-                    stop=False,
-                    sweep_requested=self.command.sweep_requested,
-                ).normalized(),
-                ReasonCode.LEFT_OBSTACLE,
-                "Left obstacle detected; steering right to avoid.",
+        else:
+            steering = 0.75  # turn right
+            reason = ReasonCode.FRONT_OBSTACLE_RIGHT_GAP
+            explanation = (
+                f"Front blocked (free_space={front_free_space:.2f}); "
+                f"steering right toward larger gap (L={frame.left_gap_score:.2f}, R={frame.right_gap_score:.2f})."
             )
-
-        if frame.ir_right:
-            return (
-                ManualCommandState(
-                    speed_cm_s=safe_speed,
-                    steering=-0.75,  # steer left away from right obstacle
-                    direction="forward",
-                    servo_angle=self.command.servo_angle,
-                    stop=False,
-                    sweep_requested=self.command.sweep_requested,
-                ).normalized(),
-                ReasonCode.RIGHT_OBSTACLE,
-                "Right obstacle detected; steering left to avoid.",
-            )
-
-        return None, None, None
+        return (
+            ManualCommandState(
+                speed_cm_s=safe_speed,
+                steering=steering,
+                direction="forward",
+                servo_angle=self.command.servo_angle,
+                stop=False,
+                sweep_requested=False,
+            ).normalized(),
+            reason,
+            explanation,
+        )
 
     def _decision_dict(self, decision: Decision | None) -> dict | None:
         if decision is None:
@@ -381,6 +417,11 @@ class HostProcessor:
             scores[image.angle] = image_gap_scores(str(path))
             metrics[image.angle] = analyze_gap(str(path))
         return scores, metrics
+
+    def _front_gap_metrics(self, image_path: Path | None) -> dict:
+        if image_path is None:
+            return {"free_space_score": 1.0, "obstacle_score": 0.0, "passable": True}
+        return analyze_gap(str(image_path))
 
     def latest_image_bytes(self) -> tuple[bytes, str] | None:
         if self.latest_image_data is not None:

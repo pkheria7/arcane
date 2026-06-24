@@ -70,6 +70,10 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
         <div class="sensor" id="irCenter"><div class="label">IR Center</div><div class="value">-</div></div>
         <div class="sensor" id="irRight"><div class="label">IR Right</div><div class="value">-</div></div>
         <div class="sensor" id="ultrasonic"><div class="label">Ultrasonic</div><div class="value">-</div></div>
+        <div class="sensor" id="frontGap"><div class="label">Front Free Space</div><div class="value">-</div></div>
+        <div class="sensor" id="leftGap"><div class="label">Left Gap</div><div class="value">-</div></div>
+        <div class="sensor" id="rightGap"><div class="label">Right Gap</div><div class="value">-</div></div>
+        <div class="sensor" id="sweepStatus"><div class="label">Sweep</div><div class="value">-</div></div>
       </div>
 
       <div class="actions">
@@ -135,7 +139,7 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
       }
     }
 
-    function renderSensors(frame) {
+    function renderSensors(frame, suggestion, frontMetrics, gapMetrics) {
       const setSensor = (id, active, text) => {
         const el = document.getElementById(id);
         el.classList.toggle('active', Boolean(active));
@@ -145,6 +149,17 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
       setSensor('irCenter', frame.ir_center, frame.ir_center ? 'OBSTACLE' : 'clear');
       setSensor('irRight', frame.ir_right, frame.ir_right ? 'OBSTACLE' : 'clear');
       setSensor('ultrasonic', false, (frame.ultrasonic_distance ?? 0).toFixed(1) + ' cm');
+
+      const frontFree = frontMetrics?.free_space_score ?? suggestion?.front_free_space_score ?? 0.5;
+      setSensor('frontGap', frontFree < 0.35, frontFree.toFixed(2));
+
+      const leftGap = frame.left_gap_score ?? 0.5;
+      const rightGap = frame.right_gap_score ?? 0.5;
+      setSensor('leftGap', leftGap < 0.35, leftGap.toFixed(2));
+      setSensor('rightGap', rightGap < 0.35, rightGap.toFixed(2));
+
+      const sweepActive = Boolean(Object.keys(gapMetrics || {}).length);
+      setSensor('sweepStatus', sweepActive, sweepActive ? 'active' : 'idle');
     }
 
     function renderDecision(decision, command) {
@@ -173,7 +188,7 @@ AUTONOMOUS_DASHBOARD_HTML = """<!doctype html>
         mode = data.mode || 'manual';
         renderModelStatus(data.model_loaded, data.model_load_error);
         renderMode();
-        renderSensors(data.latest_frame || {});
+        renderSensors(data.latest_frame || {}, data.latest_suggestion || {}, data.latest_front_gap_metrics || {}, data.latest_gap_metrics || {});
         renderDecision(data.latest_command_decision, data.command);
         renderReport(data.latest_accident_report_path);
 

@@ -32,7 +32,7 @@ gpio:
 navigation:
   constant_speed: 0.42
   turn_speed: 0.36
-  emergency_distance_cm: 18.0
+  emergency_distance_cm: 40.0
   safe_gap_threshold: 0.35
   # Absolute servo angles: 0=right, 90=front, 180=left
   center_scan_angles: [45, 90, 135]
